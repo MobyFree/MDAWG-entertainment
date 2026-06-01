@@ -27,7 +27,7 @@ class ItemRarity(Enum):
 @dataclass
 class Item:
     name: str
-    item_type: str  # weapon, armor, consumable
+    item_type: str
     damage_bonus: int = 0
     armor_bonus: int = 0
     to_hit_bonus: int = 0
@@ -121,7 +121,7 @@ class CombatCharacter:
             status += f"{CLR_CYAN}Armor:{CLR_RESET} {self.active_armor.name} (+{self.active_armor.armor_bonus})\n"
         return status
 
-# --- PART 1: Advanced DM AI with Proper Narration ---
+# --- PART 1: Advanced DM AI with Story Narration ---
 class GameAI:
     def __init__(self):
         print(f"{CLR_YELLOW}[INIT] Loading AI DM model...{CLR_RESET}", flush=True)
@@ -129,50 +129,41 @@ class GameAI:
         self.pipe = pipeline("text-generation", model="Qwen/Qwen2.5-0.5B-Instruct", device="cpu")
         print(f"{CLR_GREEN}[INIT] AI DM loaded and ready!{CLR_RESET}\n", flush=True)
 
-    def _extract_clean_narrative(self, text: str) -> str:
-        """Extract only the AI's narration without prompt"""
-        # Take only the generated part, not the prompt
-        if "Write" in text or "Describe" in text or "post-apocalyptic" in text:
-            # Find where actual narration likely starts
-            lines = text.split('\n')
-            narrative_lines = []
-            started = False
-            
-            for line in lines:
-                # Skip obvious prompt lines
-                if any(x in line for x in ["Write", "Describe", "post-apocalyptic DM", "d20 roll"]):
-                    started = False
-                    continue
-                if line.strip() and not line.startswith(("You", "Write", "DM")):
-                    narrative_lines.append(line.strip())
-                    started = True
-            
-            narrative = ' '.join(narrative_lines)
-        else:
-            narrative = text
+    def narrate_story(self, player_location: str, last_action: str = "", turn_num: int = 1) -> str:
+        """Generate story narration for exploration/downtime"""
+        prompt = (
+            f"You are a gritty post-apocalyptic DM narrating a wasteland adventure. "
+            f"The player is at: {player_location}. Turn {turn_num}/100. "
+            f"Write 3-4 vivid sentences describing the wasteland environment, atmosphere, or NPCs. "
+            f"Be descriptive but leave room for player interaction. What do they see, hear, smell?"
+        )
         
-        # Ensure complete sentences
-        if narrative:
-            sentences = []
-            parts = narrative.split('.')
-            for part in parts:
-                part = part.strip()
-                if len(part) > 10:
-                    sentences.append(part + '.')
-                if len(sentences) >= 3:
-                    break
-            
-            if sentences:
-                return ' '.join(sentences)
-        
-        return text.strip()[:200]
+        try:
+            output = self.pipe(prompt, max_new_tokens=150, do_sample=True, temperature=0.85, top_p=0.9)
+            response = output[0]['generated_text']
+            # Extract only generated narrative
+            if prompt in response:
+                narrative = response.split(prompt)[-1].strip()
+            else:
+                narrative = response
+            # Clean up and ensure complete sentences
+            sentences = narrative.split('.')
+            clean_sentences = [s.strip() + '.' for s in sentences if len(s.strip()) > 10]
+            return ' '.join(clean_sentences[:4])
+        except:
+            locations = {
+                "Wasteland Settlement": "The settlement around you is a collection of ramshackle buildings and makeshift shelters. The wind carries the scent of dust and decay. You can see merchants haggling in the distance.",
+                "Desert Ruins": "Crumbling ruins of the old world stretch across the horizon. Metal frameworks jut from the sand like skeletal remains. The sun beats down mercilessly on this desolate place.",
+                "Underground Bunker": "The concrete walls of the bunker are cold and damp. Emergency lighting flickers overhead, casting eerie shadows. The air is stale but breathable.",
+                "Trading Post": "A bustling hub of activity where survivors gather to trade. Guards watch from elevated platforms. The smell of food and fuel fills the air.",
+                "Abandoned Lab": "High-tech equipment lies dormant in the darkness, half-buried by sand and time. Computer terminals hang silent on the walls. Something feels wrong here."
+            }
+            return locations.get(player_location, "The wasteland stretches endlessly before you, empty and unforgiving. The wind whispers of ancient secrets lost to time.")
 
-    def narrate_combat_start(self, player: 'CombatCharacter', enemies: List['CombatCharacter']) -> str:
-        """Generate opening narration for combat"""
-        enemy_names = ", ".join([e.name for e in enemies])
-        return (f"The wasteland erupts into chaos as {player.name} faces off against {enemy_names}. "
-                f"Sand swirls around your feet as your enemies close in, weapons ready. "
-                f"Every heartbeat feels like thunder as you prepare for the fight of your life.")
+    def narrate_encounter_start(self, enemy_names: str) -> str:
+        """Narrate the start of an encounter"""
+        return (f"Your journey is interrupted! {enemy_names} emerge from the shadows, "
+                f"blocking your path forward. Combat is unavoidable!")
 
     def narrate_round_start(self, round_num: int, active_combatants: List[str]) -> str:
         """Generate round narration"""
@@ -180,70 +171,76 @@ class GameAI:
         return (f"Round {round_num}: The battle intensifies! {combatants_str} clash once more. "
                 f"Weapons clash, dust rises, and survival hangs by a thread.")
 
-    def narrate_attack(self, attacker: 'CombatCharacter', defender: 'CombatCharacter', 
+    def narrate_attack(self, attacker: str, defender: str, 
                       attack_roll: int, hit: bool, damage: int = 0, 
                       critical: Optional[str] = None) -> str:
         """Generate attack narration"""
         
         if critical == "failure":
-            return (f"{attacker.name} swings {attacker.weapon} wildly, completely missing {defender.name}. "
-                   f"The weapon whistles through empty air as {attacker.name} stumbles off-balance. "
-                   f"A critical failure that leaves {attacker.name} vulnerable!")
-        
+            return (f"{attacker} swings wildly, completely missing {defender}. "
+                   f"The weapon whistles through empty air. A critical failure!")
         elif critical == "success":
-            return (f"{attacker.name} unleashes a DEVASTATING strike with {attacker.weapon}! "
-                   f"The blow connects with a sickening crunch, slamming into {defender.name} for {damage} damage! "
-                   f"Blood sprays across the wasteland as {defender.name} reels from the catastrophic impact!")
-        
+            return (f"{attacker} unleashes a DEVASTATING strike! "
+                   f"The blow connects with a sickening crunch, dealing {damage} damage! "
+                   f"Blood sprays as {defender} reels from the catastrophic impact!")
         elif hit:
-            return (f"{attacker.name} strikes {defender.name} with {attacker.weapon}, dealing {damage} damage! "
-                   f"The weapon connects with brutal force, drawing blood. "
-                   f"{defender.name} staggers backward from the impact.")
-        
+            return (f"{attacker} strikes {defender}, dealing {damage} damage! "
+                   f"The weapon connects with brutal force. "
+                   f"{defender} staggers backward from the impact.")
         else:
-            return (f"{attacker.name} attempts to hit {defender.name} but the attack misses! "
-                   f"The weapon passes just inches away from its target. "
-                   f"{defender.name} sidesteps the incoming attack with practiced ease.")
+            return (f"{attacker} swings at {defender} but the attack misses! "
+                   f"The weapon passes just inches away. "
+                   f"{defender} sidesteps with practiced ease.")
 
-    def narrate_death(self, defeated: 'CombatCharacter', killer: 'CombatCharacter') -> str:
+    def narrate_death(self, defeated: str, killer: str) -> str:
         """Generate death narration"""
-        return (f"{defeated.name} collapses to the ground, their life extinguished by {killer.name}. "
-               f"Another body falls in the wasteland. Another story ends. "
+        return (f"{defeated} collapses to the ground, their life extinguished. "
+               f"Another body falls in the wasteland. "
                f"The desert claims yet another soul.")
 
-    def narrate_defend(self, character: 'CombatCharacter') -> str:
+    def narrate_defend(self, character: str) -> str:
         """Generate defend narration"""
-        return (f"{character.name} takes a defensive stance, bracing for incoming attacks. "
+        return (f"{character} takes a defensive stance, bracing for incoming attacks. "
                f"Every muscle tenses in preparation. "
                f"They're ready to weather whatever comes next.")
 
-    def narrate_item_use(self, character: 'CombatCharacter', item: Item) -> str:
+    def narrate_item_use(self, character: str, item: str) -> str:
         """Generate item usage narration"""
-        if "health" in item.name.lower():
-            return (f"{character.name} quickly deploys a {item.name}! "
-                   f"Relief floods through their body as wounds begin to close. "
-                   f"They're ready to continue fighting.")
+        if "health" in item.lower():
+            return (f"{character} quickly deploys a {item}! "
+                   f"Relief floods through their body as wounds begin to close.")
         else:
-            return (f"{character.name} uses {item.name}! {item.description}")
+            return f"{character} uses {item}!"
 
-    def narrate_victory(self, player: 'CombatCharacter') -> str:
+    def narrate_victory(self, player: str) -> str:
         """Generate victory narration"""
-        return (f"{player.name} stands victorious over their fallen enemies! "
-               f"Blood stains the wasteland, but {player.name} survives. "
-               f"The desert has tested them, and they have emerged triumphant.")
+        return (f"{player} stands victorious over the fallen enemies! "
+               f"Blood stains the wasteland, but {player} survives. "
+               f"Another day won in this harsh world.")
 
-    def narrate_defeat(self) -> str:
+    def narrate_defeat(self, player: str) -> str:
         """Generate defeat narration"""
-        return (f"Darkness closes in as your vision fades. "
-               f"The wasteland claims you as yet another victim. "
-               f"Your story ends here, in the sand.")
+        return (f"Darkness closes in as {player}'s vision fades. "
+               f"The wasteland claims {player} as yet another victim. "
+               f"Another story ends in the sand.")
 
-# --- PART 2: Enhanced Combat Game ---
-class AdvancedCombatGame:
+    def narrate_exploration_action(self, action: str, location: str) -> str:
+        """Narrate exploration actions"""
+        actions = {
+            "search": f"You search the area around {location} carefully. You find remnants of the old world scattered about.",
+            "rest": f"You find shelter and rest at {location}. The wasteland is quiet for once.",
+            "investigate": f"You investigate the surroundings at {location}. There are signs of past habitation.",
+            "listen": f"You listen carefully at {location}. Strange sounds echo in the distance.",
+            "gather": f"You gather resources from {location}. A few useful items are collected."
+        }
+        return actions.get(action.lower(), f"You perform an action at {location}.")
+
+# --- PART 2: Persistent World Combat Game ---
+class WastelandAdventure:
     def __init__(self):
         self.ai = GameAI()
         
-        # Initialize player with detailed equipment
+        # Player character
         self.player = CombatCharacter(
             name="You",
             hp=100,
@@ -263,6 +260,8 @@ class AdvancedCombatGame:
                      description="Kevlar reinforced", rarity=ItemRarity.UNCOMMON),
                 Item("Health Pack", "consumable", damage_bonus=25,
                      description="Restores 25 HP", rarity=ItemRarity.COMMON),
+                Item("Health Pack", "consumable", damage_bonus=25,
+                     description="Restores 25 HP", rarity=ItemRarity.COMMON),
                 Item("Energy Cell", "consumable",
                      description="Refills energy weapon", rarity=ItemRarity.COMMON)
             ]
@@ -270,44 +269,31 @@ class AdvancedCombatGame:
         self.player.active_weapon = self.player.inventory[0]
         self.player.active_armor = self.player.inventory[2]
         
-        # Initialize enemies
-        self.enemies: List[CombatCharacter] = [
-            CombatCharacter(
-                name="Super Mutant",
-                hp=60,
-                max_hp=60,
-                atk=7,
-                defense=1,
-                weapon="Super Sledge",
-                weapon_bonus=3,
-                location="Wasteland - Northeast",
-                inventory=[Item("Scrap Metal", "junk", description="Worthless but heavy")]
-            ),
-            CombatCharacter(
-                name="Feral Ghoul",
-                hp=30,
-                max_hp=30,
-                atk=5,
-                defense=0,
-                weapon="Claws",
-                weapon_bonus=1,
-                location="Wasteland - Underground",
-                inventory=[Item("Spoiled Meat", "junk", description="Smells of death")]
-            )
-        ]
-        
-        self.all_combatants: List[CombatCharacter] = [self.player] + self.enemies
-        self.initiative_order: List[CombatCharacter] = []
+        # Game state
+        self.turn_count = 0
+        self.max_turns = 100
+        self.in_combat = False
+        self.current_enemies: List[CombatCharacter] = []
         self.round_count = 0
-        self.in_combat = True
+        self.game_over = False
         
+        # Available locations
+        self.locations = [
+            "Wasteland Settlement",
+            "Desert Ruins",
+            "Underground Bunker",
+            "Trading Post",
+            "Abandoned Lab"
+        ]
+
     def roll_initiative(self):
-        """Roll and display initiative"""
+        """Roll initiative for all combatants"""
         print(f"\n{CLR_YELLOW}{'='*90}")
-        print(f"INITIATIVE PHASE - ROLLING FOR COMBAT ORDER")
+        print(f"INITIATIVE PHASE")
         print(f"{'='*90}{CLR_RESET}\n")
         
-        for combatant in self.all_combatants:
+        all_combatants = [self.player] + self.current_enemies
+        for combatant in all_combatants:
             d20_roll = random.randint(1, 20)
             modifier = combatant.atk // 2
             combatant.initiative_roll = d20_roll + modifier
@@ -315,35 +301,26 @@ class AdvancedCombatGame:
             role = f"{CLR_GREEN}[PLAYER]{CLR_RESET}" if combatant.is_player else f"{CLR_RED}[ENEMY]{CLR_RESET}"
             print(f"{role} {combatant.name:20} d20: {d20_roll:2} + {modifier} = {combatant.initiative_roll:3}")
         
-        self.initiative_order = sorted(self.all_combatants, key=lambda x: x.initiative_roll, reverse=True)
-        
-        print(f"\n{CLR_CYAN}{'='*90}")
-        print(f"COMBAT ORDER:")
-        print(f"{'='*90}{CLR_RESET}")
-        for i, c in enumerate(self.initiative_order, 1):
-            role = "PLAYER" if c.is_player else "ENEMY"
-            print(f"  {i}. {CLR_WHITE}{c.name:20}{CLR_RESET} (Init: {c.initiative_roll}) - {role}")
-        print()
+        self.initiative_order = sorted(all_combatants, key=lambda x: x.initiative_roll, reverse=True)
 
     def display_combat_status(self):
-        """Display combat status"""
+        """Display battle status"""
         print(f"\n{CLR_BLUE}{'='*90}")
-        print(f"ROUND {self.round_count} - BATTLEFIELD STATUS")
+        print(f"ROUND {self.round_count} - TURN {self.turn_count}/{self.max_turns}")
         print(f"{'='*90}{CLR_RESET}\n")
         
         print(f"{CLR_GREEN}[PLAYER]{CLR_RESET}")
         print(self.player.display_status())
-        print(f"  Location: {self.player.location}")
+        print(f"  Location: {self.player.location}\n")
         
-        print(f"\n{CLR_RED}[ENEMIES]{CLR_RESET}")
-        for enemy in self.enemies:
+        print(f"{CLR_RED}[ENEMIES]{CLR_RESET}")
+        for enemy in self.current_enemies:
             if enemy.hp > 0:
                 print(enemy.display_status())
                 print(f"  Location: {enemy.location}")
-        print()
 
-    def parse_player_action(self, command: str):
-        """Parse player commands"""
+    def parse_action(self, command: str):
+        """Parse player action"""
         command = command.lower().strip()
         parts = command.split()
         
@@ -351,29 +328,13 @@ class AdvancedCombatGame:
             return None, None
         
         action = parts[0]
+        target = " ".join(parts[1:]) if len(parts) > 1 else None
         
-        if action in ["attack", "a"] and len(parts) > 1:
-            return "attack", " ".join(parts[1:])
-        elif action in ["defend", "d"]:
-            return "defend", None
-        elif action in ["use", "u"] and len(parts) > 1:
-            return "use", " ".join(parts[1:])
-        elif action in ["equip", "eq"] and len(parts) > 1:
-            return "equip", " ".join(parts[1:])
-        elif action in ["inventory", "inv", "i"]:
-            return "inventory", None
-        elif action in ["status", "s"]:
-            return "status", None
-        elif action in ["flee", "f"]:
-            return "flee", None
-        elif action in ["help", "h", "?"]:
-            return "help", None
-        
-        return None, None
+        return action, target
 
     def find_enemy(self, name: str) -> Optional[CombatCharacter]:
         """Find enemy by partial name"""
-        for enemy in self.enemies:
+        for enemy in self.current_enemies:
             if enemy.hp > 0 and (name.lower() in enemy.name.lower() or enemy.name.lower() in name.lower()):
                 return enemy
         return None
@@ -386,14 +347,12 @@ class AdvancedCombatGame:
         return None
 
     def roll_attack(self, attacker: CombatCharacter, defender: CombatCharacter) -> Dict:
-        """Execute attack roll with bonuses"""
+        """Execute attack roll"""
         d20_roll = random.randint(1, 20)
         
-        # Apply to-hit bonuses
         to_hit_bonus = attacker.active_weapon.to_hit_bonus if attacker.active_weapon else 0
         total_roll = d20_roll + attacker.atk + to_hit_bonus
         
-        # Defense AC
         defense_ac = 12 + (defender.defense if defender.active_armor else 0)
         
         if d20_roll == 1:
@@ -412,50 +371,36 @@ class AdvancedCombatGame:
             return {"hit": False, "d20": d20_roll, "total": total_roll, "damage": 0, "critical": None}
 
     def execute_player_turn(self):
-        """Execute player's turn"""
+        """Execute player's combat turn"""
         self.display_combat_status()
         
         while True:
-            print(f"{CLR_GREEN}[YOUR TURN]{CLR_RESET}")
-            print(f"{CLR_YELLOW}Commands: attack <enemy>, defend, use <item>, equip <weapon>, inventory, status, flee, help{CLR_RESET}")
+            print(f"\n{CLR_GREEN}[YOUR TURN]{CLR_RESET}")
+            print(f"{CLR_YELLOW}Combat Commands: attack <enemy>, defend, use <item>, equip <weapon>, inventory, help{CLR_RESET}")
             command = input(f"{CLR_GREEN}> {CLR_RESET}").strip()
             
-            action, target = self.parse_player_action(command)
+            action, target = self.parse_action(command)
             
             if action == "help":
-                print(f"{CLR_CYAN}\n[COMMANDS]")
-                print(f"  attack <enemy>    - Attack by name")
-                print(f"  defend            - Raise defenses")
-                print(f"  use <item>        - Use consumable")
-                print(f"  equip <weapon>    - Equip different weapon")
-                print(f"  inventory         - View items")
-                print(f"  status            - View full status")
-                print(f"  flee              - Escape (DC 12)")
-                print(f"  help              - Show this{CLR_RESET}\n")
+                print(f"{CLR_CYAN}[COMMANDS]\n  attack <enemy> - Attack an enemy\n  defend - Raise defenses\n  use <item> - Use consumable\n  equip <weapon> - Switch weapons\n  inventory - View items\n  help - This message{CLR_RESET}\n")
                 continue
             
             if action == "inventory":
                 print(f"\n{self.player.display_inventory()}\n")
                 continue
             
-            if action == "status":
-                print(self.player.get_full_status())
-                continue
-            
             if action is None:
-                print(f"{CLR_RED}Invalid command. Type 'help' for options.{CLR_RESET}\n")
+                print(f"{CLR_RED}Invalid command.{CLR_RESET}\n")
                 continue
             
             if action == "equip":
                 if not target:
-                    print(f"{CLR_RED}Equip what? Specify weapon name.{CLR_RESET}\n")
+                    print(f"{CLR_RED}Equip what?{CLR_RESET}\n")
                     continue
-                
                 item = self.find_item(self.player, target)
                 if not item or item.item_type != "weapon":
                     print(f"{CLR_RED}Weapon not found.{CLR_RESET}\n")
                     continue
-                
                 self.player.active_weapon = item
                 self.player.weapon = item.name
                 print(f"{CLR_GREEN}Equipped {item.name}! (+{item.to_hit_bonus} to-hit, +{item.damage_bonus} damage){CLR_RESET}\n")
@@ -463,18 +408,16 @@ class AdvancedCombatGame:
             
             if action == "attack":
                 if not target:
-                    print(f"{CLR_RED}Attack whom? Use: attack <enemy name>{CLR_RESET}\n")
+                    print(f"{CLR_RED}Attack whom?{CLR_RESET}\n")
                     continue
-                
                 enemy = self.find_enemy(target)
                 if not enemy:
-                    print(f"{CLR_RED}No such enemy found.{CLR_RESET}\n")
+                    print(f"{CLR_RED}No such enemy.{CLR_RESET}\n")
                     continue
                 
                 result = self.roll_attack(self.player, enemy)
-                
-                print(f"\n{CLR_BLUE}[ATTACK ROLL]{CLR_RESET}")
-                print(f"{CLR_CYAN}d20: {result['d20']} + {self.player.atk} (ATK) + {self.player.active_weapon.to_hit_bonus if self.player.active_weapon else 0} (weapon) = {result['total']}{CLR_RESET}")
+                print(f"\n{CLR_BLUE}[ATTACK]{CLR_RESET}")
+                print(f"{CLR_CYAN}d20: {result['d20']} + {self.player.atk} + {self.player.active_weapon.to_hit_bonus if self.player.active_weapon else 0} = {result['total']}{CLR_RESET}")
                 
                 if result["hit"]:
                     enemy.hp = max(enemy.hp - result["damage"], 0)
@@ -484,164 +427,255 @@ class AdvancedCombatGame:
                     status = f"{CLR_RED}CRITICAL FAILURE!{CLR_RESET}" if result["critical"] == "failure" else f"{CLR_RED}MISS!{CLR_RESET}"
                     print(f"{status}\n")
                 
-                narrative = self.ai.narrate_attack(self.player, enemy, result['d20'], 
+                narrative = self.ai.narrate_attack(self.player.name, enemy.name, result['d20'], 
                                                   result["hit"], result["damage"], result["critical"])
                 print(f"{CLR_MAGENTA}{narrative}{CLR_RESET}\n")
                 
                 if enemy.hp <= 0:
-                    death_narration = self.ai.narrate_death(enemy, self.player)
-                    print(f"{CLR_RED}[DEATH]{CLR_RESET} {death_narration}\n")
-                    self.enemies.remove(enemy)
+                    death_text = self.ai.narrate_death(enemy.name, self.player.name)
+                    print(f"{CLR_RED}[DEATH]{CLR_RESET} {death_text}\n")
+                    self.current_enemies.remove(enemy)
                     if enemy in self.initiative_order:
                         self.initiative_order.remove(enemy)
                 
                 return "attack"
             
             elif action == "defend":
-                narration = self.ai.narrate_defend(self.player)
-                print(f"\n{CLR_MAGENTA}{narration}{CLR_RESET}\n")
+                text = self.ai.narrate_defend(self.player.name)
+                print(f"\n{CLR_MAGENTA}{text}{CLR_RESET}\n")
                 return "defend"
             
             elif action == "use":
                 if not target:
-                    print(f"{CLR_RED}Use what? Specify item name.{CLR_RESET}\n")
+                    print(f"{CLR_RED}Use what?{CLR_RESET}\n")
                     continue
-                
                 item = self.find_item(self.player, target)
                 if not item:
                     print(f"{CLR_RED}Item not found.{CLR_RESET}\n")
                     continue
                 
-                narration = self.ai.narrate_item_use(self.player, item)
-                print(f"\n{CLR_MAGENTA}{narration}{CLR_RESET}\n")
+                text = self.ai.narrate_item_use(self.player.name, item.name)
+                print(f"\n{CLR_MAGENTA}{text}{CLR_RESET}\n")
                 
-                if item.item_type == "consumable":
-                    if "health" in item.name.lower():
-                        heal_amount = item.damage_bonus
-                        self.player.hp = min(self.player.hp + heal_amount, self.player.max_hp)
-                        print(f"{CLR_GREEN}Restored {heal_amount} HP! Current: {self.player.hp}/{self.player.max_hp}{CLR_RESET}\n")
+                if item.item_type == "consumable" and "health" in item.name.lower():
+                    heal = item.damage_bonus
+                    self.player.hp = min(self.player.hp + heal, self.player.max_hp)
+                    print(f"{CLR_GREEN}Restored {heal} HP! {self.player.hp}/{self.player.max_hp}{CLR_RESET}\n")
                     self.player.inventory.remove(item)
                 
                 return "use"
-            
-            elif action == "flee":
-                flee_roll = random.randint(1, 20)
-                print(f"{CLR_BLUE}[FLEE ATTEMPT] Flee Roll: {flee_roll}{CLR_RESET}\n")
-                
-                if flee_roll > 12:
-                    print(f"{CLR_GREEN}You escape the combat!{CLR_RESET}\n")
-                    self.in_combat = False
-                    return "flee"
-                else:
-                    print(f"{CLR_RED}Failed! Enemies pursue!{CLR_RESET}\n")
-                    continue
 
     def execute_enemy_turn(self, enemy: CombatCharacter):
-        """Execute enemy's turn"""
-        if enemy.hp <= 0 or not self.enemies:
+        """Execute enemy turn"""
+        if enemy.hp <= 0:
             return
         
-        target = self.player
-        result = self.roll_attack(enemy, target)
-        
-        print(f"{CLR_RED}[{enemy.name.upper()} ATTACKS]{CLR_RESET}")
-        print(f"{CLR_CYAN}d20: {result['d20']} + {enemy.atk} (ATK) = {result['total']}{CLR_RESET}")
+        result = self.roll_attack(enemy, self.player)
+        print(f"{CLR_RED}[{enemy.name.upper()}]{CLR_RESET}")
+        print(f"{CLR_CYAN}d20: {result['d20']} + {enemy.atk} = {result['total']}{CLR_RESET}")
         
         if result["hit"]:
-            target.hp = max(target.hp - result["damage"], 0)
+            self.player.hp = max(self.player.hp - result["damage"], 0)
             status = f"{CLR_RED}CRITICAL HIT!{CLR_RESET}" if result["critical"] == "success" else f"{CLR_RED}HIT!{CLR_RESET}"
             print(f"{status} You take {result['damage']} damage!\n")
         else:
             status = f"{CLR_GREEN}CRITICAL FAILURE!{CLR_RESET}" if result["critical"] == "failure" else f"{CLR_GREEN}MISS!{CLR_RESET}"
             print(f"{status}\n")
         
-        narrative = self.ai.narrate_attack(enemy, target, result['d20'], result["hit"], 
-                                          result["damage"], result["critical"])
-        print(f"{CLR_MAGENTA}{narrative}{CLR_RESET}\n")
+        text = self.ai.narrate_attack(enemy.name, self.player.name, result['d20'], result["hit"], 
+                                     result["damage"], result["critical"])
+        print(f"{CLR_MAGENTA}{text}{CLR_RESET}\n")
         
-        if target.hp <= 0:
-            death_narration = self.ai.narrate_defeat()
-            print(f"{CLR_RED}[YOUR DEATH] {death_narration}{CLR_RESET}\n")
+        if self.player.hp <= 0:
+            death_text = self.ai.narrate_defeat(self.player.name)
+            print(f"{CLR_RED}[DEATH] {death_text}{CLR_RESET}\n")
+            self.game_over = True
             self.in_combat = False
 
-    def show_end_menu(self):
-        """Show menu after game ends"""
-        while True:
-            print(f"\n{CLR_YELLOW}{'='*90}")
-            print(f"GAME OVER")
-            print(f"{'='*90}{CLR_RESET}")
-            print(f"\n{CLR_CYAN}Options:{CLR_RESET}")
-            print(f"  new   - Start a new game")
-            print(f"  exit  - Exit the program\n")
+    def start_combat_encounter(self, num_enemies: int = 2):
+        """Start a random combat encounter"""
+        self.in_combat = True
+        self.round_count = 0
+        self.current_enemies = []
+        
+        enemy_templates = [
+            CombatCharacter(
+                name="Super Mutant", hp=60, max_hp=60, atk=7, defense=1,
+                weapon="Super Sledge", weapon_bonus=3, location="Combat Zone"
+            ),
+            CombatCharacter(
+                name="Feral Ghoul", hp=30, max_hp=30, atk=5, defense=0,
+                weapon="Claws", weapon_bonus=1, location="Combat Zone"
+            ),
+            CombatCharacter(
+                name="Raider", hp=40, max_hp=40, atk=6, defense=1,
+                weapon="Hunting Rifle", weapon_bonus=2, location="Combat Zone"
+            )
+        ]
+        
+        selected = random.sample(enemy_templates, min(num_enemies, len(enemy_templates)))
+        self.current_enemies = selected
+        
+        enemy_names = ", ".join([e.name for e in self.current_enemies])
+        encounter_text = self.ai.narrate_encounter_start(enemy_names)
+        print(f"\n{CLR_RED}{encounter_text}{CLR_RESET}\n")
+        
+        self.roll_initiative()
+
+    def run_combat_round(self):
+        """Execute one complete combat round"""
+        self.round_count += 1
+        
+        active = [c.name for c in self.initiative_order if c.hp > 0]
+        round_text = self.ai.narrate_round_start(self.round_count, active)
+        print(f"\n{CLR_YELLOW}[ROUND {self.round_count}]{CLR_RESET}")
+        print(f"{CLR_MAGENTA}{round_text}{CLR_RESET}\n")
+        
+        for combatant in self.initiative_order:
+            if self.player.hp <= 0 or len(self.current_enemies) == 0:
+                break
+            if combatant.hp <= 0:
+                continue
             
-            command = input(f"{CLR_GREEN}> {CLR_RESET}").strip().lower()
-            
-            if command in ["new", "n"]:
-                return True
-            elif command in ["exit", "e", "quit", "q"]:
-                return False
+            if combatant.is_player:
+                self.execute_player_turn()
             else:
-                print(f"{CLR_RED}Invalid command.{CLR_RESET}")
+                self.execute_enemy_turn(combatant)
+        
+        # Check combat end
+        if len(self.current_enemies) == 0 and self.in_combat:
+            print(f"\n{CLR_GREEN}{'='*90}")
+            print(f"VICTORY!")
+            print(f"{'='*90}{CLR_RESET}\n")
+            victory_text = self.ai.narrate_victory(self.player.name)
+            print(f"{CLR_GREEN}{victory_text}{CLR_RESET}\n")
+            self.in_combat = False
+
+    def run_exploration_action(self):
+        """Execute player exploration action"""
+        self.turn_count += 1
+        
+        # Show world state
+        print(f"\n{CLR_BLUE}{'='*90}")
+        print(f"TURN {self.turn_count}/{self.max_turns}")
+        print(f"{'='*90}{CLR_RESET}")
+        print(f"\n{CLR_GREEN}[LOCATION]{CLR_RESET} {self.player.location}")
+        print(f"{self.player.display_status()}\n")
+        
+        # Generate environment narration
+        env_narration = self.ai.narrate_story(self.player.location, "", self.turn_count)
+        print(f"{CLR_MAGENTA}{env_narration}{CLR_RESET}\n")
+        
+        # Get player action
+        print(f"{CLR_YELLOW}Actions: move <location>, search, rest, examine, travel, inventory, status, help{CLR_RESET}")
+        command = input(f"{CLR_GREEN}> {CLR_RESET}").strip()
+        
+        action, target = self.parse_action(command)
+        
+        if action == "help":
+            print(f"\n{CLR_CYAN}[EXPLORATION COMMANDS]")
+            print(f"  move <location>  - Travel to: {', '.join(self.locations)}")
+            print(f"  search           - Search current location for items/info")
+            print(f"  rest             - Rest and recover HP")
+            print(f"  examine          - Examine surroundings")
+            print(f"  inventory        - View items")
+            print(f"  status           - Full character sheet")
+            print(f"  travel           - Chance to encounter enemies{CLR_RESET}\n")
+            return True
+        
+        if action == "inventory":
+            print(f"\n{self.player.display_inventory()}\n")
+            return True
+        
+        if action == "status":
+            print(self.player.get_full_status())
+            return True
+        
+        if action == "move":
+            if not target or target not in self.locations:
+                print(f"{CLR_RED}Move to where? {self.locations}{CLR_RESET}\n")
+                return True
+            self.player.location = target
+            print(f"{CLR_GREEN}You travel to {target}.{CLR_RESET}\n")
+            return True
+        
+        if action == "rest":
+            heal = min(20, self.player.max_hp - self.player.hp)
+            self.player.hp += heal
+            rest_text = self.ai.narrate_story(self.player.location, "rest", self.turn_count)
+            print(f"{CLR_MAGENTA}{rest_text}{CLR_RESET}\n")
+            print(f"{CLR_GREEN}Restored {heal} HP! {self.player.hp}/{self.player.max_hp}{CLR_RESET}\n")
+            return True
+        
+        if action == "search":
+            search_text = self.ai.narrate_exploration_action("search", self.player.location)
+            print(f"{CLR_MAGENTA}{search_text}{CLR_RESET}\n")
+            return True
+        
+        if action == "examine":
+            examine_text = self.ai.narrate_exploration_action("investigate", self.player.location)
+            print(f"{CLR_MAGENTA}{examine_text}{CLR_RESET}\n")
+            return True
+        
+        if action == "travel":
+            print(f"\n{CLR_YELLOW}You venture deeper into the wasteland...{CLR_RESET}\n")
+            encounter_roll = random.randint(1, 20)
+            if encounter_roll > 12:
+                num_enemies = 1 if encounter_roll > 16 else 2
+                self.start_combat_encounter(num_enemies)
+            else:
+                print(f"{CLR_GREEN}You travel safely, encountering nothing.{CLR_RESET}\n")
+            return True
+        
+        print(f"{CLR_RED}Unknown action.{CLR_RESET}\n")
+        return True
 
     def run(self):
         """Main game loop"""
         print(f"\n{CLR_MAGENTA}{'='*90}")
-        print(f"WASTELAND COMBAT SYSTEM - INITIALIZED")
+        print(f"WASTELAND ADVENTURE - A PERSISTENT WORLD")
         print(f"{'='*90}{CLR_RESET}\n")
         
-        opening = self.ai.narrate_combat_start(self.player, self.enemies)
+        opening = self.ai.narrate_story(self.player.location, "", 0)
         print(f"{CLR_MAGENTA}{opening}{CLR_RESET}\n")
         
-        self.roll_initiative()
-        
-        while self.in_combat and self.player.hp > 0 and len(self.enemies) > 0:
-            self.round_count += 1
-            
-            active = [c.name for c in self.initiative_order if c.hp > 0]
-            round_narration = self.ai.narrate_round_start(self.round_count, active)
-            print(f"\n{CLR_YELLOW}[ROUND {self.round_count}]{CLR_RESET}")
-            print(f"{CLR_MAGENTA}{round_narration}{CLR_RESET}\n")
-            
-            for combatant in self.initiative_order:
-                if not self.in_combat or self.player.hp <= 0 or len(self.enemies) == 0:
+        while self.turn_count < self.max_turns and not self.game_over:
+            if self.in_combat:
+                self.run_combat_round()
+            else:
+                if not self.run_exploration_action():
                     break
-                if combatant.hp <= 0:
-                    continue
-                
-                if combatant.is_player:
-                    self.execute_player_turn()
-                else:
-                    self.execute_enemy_turn(combatant)
-            
-            if len(self.enemies) == 0:
-                print(f"\n{CLR_GREEN}{'='*90}")
-                print(f"VICTORY!")
-                print(f"{'='*90}{CLR_RESET}\n")
-                victory_text = self.ai.narrate_victory(self.player)
-                print(f"{CLR_GREEN}{victory_text}{CLR_RESET}\n")
-                self.in_combat = False
-            elif self.player.hp <= 0:
-                print(f"\n{CLR_RED}{'='*90}")
-                print(f"DEFEAT!")
-                print(f"{'='*90}{CLR_RESET}\n")
-                self.in_combat = False
+        
+        if self.game_over:
+            print(f"\n{CLR_RED}{'='*90}")
+            print(f"ADVENTURE ENDED")
+            print(f"{'='*90}{CLR_RESET}\n")
+        elif self.turn_count >= self.max_turns:
+            print(f"\n{CLR_YELLOW}{'='*90}")
+            print(f"100 TURNS COMPLETED - YOUR ADVENTURE ENDS HERE")
+            print(f"{'='*90}{CLR_RESET}\n")
 
 def main():
     """Main program loop"""
     while True:
-        game = AdvancedCombatGame()
+        game = WastelandAdventure()
         game.run()
         
-        if not game.show_end_menu():
-            break
-    
-    print(f"\n{CLR_YELLOW}Thanks for playing! Exiting in 10 seconds...{CLR_RESET}\n")
-    
-    try:
-        import time
-        time.sleep(10)
-    except:
-        pass
+        print(f"\n{CLR_CYAN}[GAME END]")
+        print(f"  new   - Start new adventure")
+        print(f"  exit  - Exit program\n")
+        
+        while True:
+            command = input(f"{CLR_GREEN}> {CLR_RESET}").strip().lower()
+            if command in ["new", "n"]:
+                break
+            elif command in ["exit", "e", "quit", "q"]:
+                print(f"\n{CLR_YELLOW}Thanks for playing! Window will close in 10 seconds...{CLR_RESET}\n")
+                import time
+                time.sleep(10)
+                return
+            else:
+                print(f"{CLR_RED}Invalid command.{CLR_RESET}")
 
 if __name__ == "__main__":
     try:
@@ -651,7 +685,7 @@ if __name__ == "__main__":
         import time
         time.sleep(5)
     except Exception as e:
-        print(f"{CLR_RED}Error occurred:{CLR_RESET}")
+        print(f"{CLR_RED}Error: {e}{CLR_RESET}")
         traceback.print_exc()
         import time
         time.sleep(10)
