@@ -30,6 +30,7 @@ class Item:
     item_type: str  # weapon, armor, consumable
     damage_bonus: int = 0
     armor_bonus: int = 0
+    to_hit_bonus: int = 0
     description: str = ""
     rarity: ItemRarity = ItemRarity.COMMON
 
@@ -42,17 +43,18 @@ class CombatCharacter:
     defense: int
     weapon: str
     weapon_bonus: int
+    location: str = "Wasteland"
     initiative_roll: int = 0
     is_player: bool = False
     inventory: List[Item] = field(default_factory=list)
     active_armor: Optional[Item] = None
+    active_weapon: Optional[Item] = None
 
     def get_hp_bar(self) -> str:
         """Generate visual HP bar with color"""
         filled = max(0, self.hp * 10 // self.max_hp)
         bar = "■" * filled + "□" * (10 - filled)
         
-        # Color based on HP percentage
         if self.hp > self.max_hp * 0.5:
             color = CLR_GREEN
         elif self.hp > self.max_hp * 0.25:
@@ -66,11 +68,18 @@ class CombatCharacter:
         """Display character status with color"""
         hp_bar = self.get_hp_bar()
         name_color = CLR_GREEN if self.is_player else CLR_RED
-        armor_str = f" | {CLR_CYAN}Armor: {self.active_armor.name}{CLR_RESET}" if self.active_armor else ""
         
         hp_color = CLR_GREEN if self.hp > self.max_hp * 0.5 else (CLR_YELLOW if self.hp > self.max_hp * 0.25 else CLR_RED)
         
-        return f"{name_color}{self.name:20}{CLR_RESET} [{hp_bar}] {hp_color}{self.hp:3}/{self.max_hp:3}{CLR_RESET} HP | {self.weapon}{armor_str}"
+        weapon_info = f"{self.weapon}"
+        if self.active_weapon:
+            weapon_info += f" (+{self.active_weapon.to_hit_bonus} to-hit, +{self.active_weapon.damage_bonus} dmg)"
+        
+        armor_info = ""
+        if self.active_armor:
+            armor_info = f" | {CLR_CYAN}Armor: {self.active_armor.name} (+{self.active_armor.armor_bonus}){CLR_RESET}"
+        
+        return f"{name_color}{self.name:20}{CLR_RESET} [{hp_bar}] {hp_color}{self.hp:3}/{self.max_hp:3}{CLR_RESET} HP | {weapon_info}{armor_info}"
 
     def display_inventory(self) -> str:
         """Display inventory items"""
@@ -85,10 +94,34 @@ class CombatCharacter:
                 ItemRarity.RARE: CLR_BLUE,
                 ItemRarity.LEGENDARY: CLR_MAGENTA
             }.get(item.rarity, CLR_WHITE)
-            items_str += f"  {i}. {rarity_color}{item.name}{CLR_RESET} ({item.item_type}) - {item.description}\n"
+            
+            bonus_info = ""
+            if item.to_hit_bonus > 0:
+                bonus_info += f" +{item.to_hit_bonus}to-hit"
+            if item.damage_bonus > 0:
+                bonus_info += f" +{item.damage_bonus}dmg"
+            if item.armor_bonus > 0:
+                bonus_info += f" +{item.armor_bonus}armor"
+            
+            items_str += f"  {i}. {rarity_color}{item.name}{CLR_RESET} ({item.item_type}){bonus_info} - {item.description}\n"
         return items_str
 
-# --- PART 1: Advanced DM AI with Verbose Combat Narration ---
+    def get_full_status(self) -> str:
+        """Get full character status with all details"""
+        status = f"\n{CLR_CYAN}{'='*90}\n"
+        status += f"CHARACTER STATUS\n"
+        status += f"{'='*90}{CLR_RESET}\n"
+        status += f"{CLR_GREEN}Name:{CLR_RESET} {self.name}\n"
+        status += f"{CLR_GREEN}Location:{CLR_RESET} {self.location}\n"
+        status += f"{CLR_RED}Health:{CLR_RESET} {self.hp}/{self.max_hp} {self.get_hp_bar()}\n"
+        status += f"{CLR_YELLOW}Attack:{CLR_RESET} {self.atk}\n"
+        status += f"{CLR_BLUE}Defense:{CLR_RESET} {self.defense}\n"
+        status += f"{CLR_MAGENTA}Weapon:{CLR_RESET} {self.weapon} (bonus: +{self.weapon_bonus})\n"
+        if self.active_armor:
+            status += f"{CLR_CYAN}Armor:{CLR_RESET} {self.active_armor.name} (+{self.active_armor.armor_bonus})\n"
+        return status
+
+# --- PART 1: Advanced DM AI with Proper Narration ---
 class GameAI:
     def __init__(self):
         print(f"{CLR_YELLOW}[INIT] Loading AI DM model...{CLR_RESET}", flush=True)
@@ -96,205 +129,121 @@ class GameAI:
         self.pipe = pipeline("text-generation", model="Qwen/Qwen2.5-0.5B-Instruct", device="cpu")
         print(f"{CLR_GREEN}[INIT] AI DM loaded and ready!{CLR_RESET}\n", flush=True)
 
-    def _extract_narrative(self, text: str) -> str:
-        """Extract clean narrative from AI response"""
-        # Remove prompt remnants
-        lines = text.split('\n')
-        narrative = ' '.join([line.strip() for line in lines if line.strip()])
-        
-        # Remove common prompt artifacts at start
-        artifacts_start = [
-            "You are a gritty", "Write a", "Describe", "Generate", "Create",
-            "In this scenario", "The player", "A gritty", "Post-apocalyptic",
-            "This is a", "Here is"
-        ]
-        
-        for artifact in artifacts_start:
-            if narrative.lower().startswith(artifact.lower()):
-                narrative = narrative[len(artifact):].strip()
-                break
-        
-        # Ensure it ends with a complete sentence
-        while narrative and narrative[-1] not in '.!?':
-            # Find last complete sentence
-            last_period = narrative.rfind('.')
-            last_exclaim = narrative.rfind('!')
-            last_question = narrative.rfind('?')
+    def _extract_clean_narrative(self, text: str) -> str:
+        """Extract only the AI's narration without prompt"""
+        # Take only the generated part, not the prompt
+        if "Write" in text or "Describe" in text or "post-apocalyptic" in text:
+            # Find where actual narration likely starts
+            lines = text.split('\n')
+            narrative_lines = []
+            started = False
             
-            last_punct = max(last_period, last_exclaim, last_question)
+            for line in lines:
+                # Skip obvious prompt lines
+                if any(x in line for x in ["Write", "Describe", "post-apocalyptic DM", "d20 roll"]):
+                    started = False
+                    continue
+                if line.strip() and not line.startswith(("You", "Write", "DM")):
+                    narrative_lines.append(line.strip())
+                    started = True
             
-            if last_punct > 0:
-                narrative = narrative[:last_punct + 1]
-            else:
-                # No punctuation found, add one at end
-                if len(narrative) > 3:
-                    narrative = narrative.rstrip() + '.'
-                break
+            narrative = ' '.join(narrative_lines)
+        else:
+            narrative = text
         
-        return narrative.strip()
+        # Ensure complete sentences
+        if narrative:
+            sentences = []
+            parts = narrative.split('.')
+            for part in parts:
+                part = part.strip()
+                if len(part) > 10:
+                    sentences.append(part + '.')
+                if len(sentences) >= 3:
+                    break
+            
+            if sentences:
+                return ' '.join(sentences)
+        
+        return text.strip()[:200]
 
     def narrate_combat_start(self, player: 'CombatCharacter', enemies: List['CombatCharacter']) -> str:
-        """Generate opening narration for combat - verbose and descriptive"""
+        """Generate opening narration for combat"""
         enemy_names = ", ".join([e.name for e in enemies])
-        prompt = (
-            f"You are a gritty post-apocalyptic DM. Write 3-4 detailed, vivid sentences describing "
-            f"the start of an intense combat encounter. The player faces {enemy_names} in the wasteland. "
-            f"Use descriptive language about the environment, atmosphere, and the menacing presence of enemies. "
-            f"Make it dramatic and immersive. End with a complete sentence."
-        )
-        
-        try:
-            output = self.pipe(prompt, max_new_tokens=150, do_sample=True, temperature=0.8, top_p=0.9)
-            response = output[0]['generated_text']
-            narrative = self._extract_narrative(response)
-            return narrative if len(narrative) > 50 else prompt.split("describes ")[1][:150]
-        except:
-            return f"The wasteland trembles as {enemy_names} emerge from the shadows, their weapons gleaming with menace. The air grows thick with tension as you lock eyes with your enemies. This battle will determine who walks away alive—and who becomes another skeleton in the sand."
+        return (f"The wasteland erupts into chaos as {player.name} faces off against {enemy_names}. "
+                f"Sand swirls around your feet as your enemies close in, weapons ready. "
+                f"Every heartbeat feels like thunder as you prepare for the fight of your life.")
 
-    def narrate_round_start(self, round_num: int) -> str:
-        """Generate verbose narration for round start"""
-        prompt = (
-            f"You are a gritty post-apocalyptic DM. Write 2-3 detailed, vivid sentences describing "
-            f"the start of combat round {round_num}. Use sensory details about the combat intensity, "
-            f"movement, tension, and atmosphere. Make it dramatic and immersive. End with a complete sentence."
-        )
-        try:
-            output = self.pipe(prompt, max_new_tokens=100, do_sample=True, temperature=0.8, top_p=0.9)
-            response = output[0]['generated_text']
-            narrative = self._extract_narrative(response)
-            return narrative if len(narrative) > 30 else f"Round {round_num} erupts with renewed fury as combatants clash once more!"
-        except:
-            return f"Round {round_num} rages on! The wasteland shakes with the violence of combat!"
+    def narrate_round_start(self, round_num: int, active_combatants: List[str]) -> str:
+        """Generate round narration"""
+        combatants_str = ", ".join(active_combatants)
+        return (f"Round {round_num}: The battle intensifies! {combatants_str} clash once more. "
+                f"Weapons clash, dust rises, and survival hangs by a thread.")
 
     def narrate_attack(self, attacker: 'CombatCharacter', defender: 'CombatCharacter', 
-                      attack_roll: int, total_roll: int, hit: bool, damage: int = 0, 
+                      attack_roll: int, hit: bool, damage: int = 0, 
                       critical: Optional[str] = None) -> str:
-        """Generate verbose attack narration"""
+        """Generate attack narration"""
         
         if critical == "failure":
-            prompt = (
-                f"You are a gritty DM. Write 2-3 detailed, dramatic sentences describing {attacker.name} "
-                f"CRITICALLY FAILING their attack against {defender.name}. Make it embarrassing and vivid. "
-                f"Describe the botched movement, the weapon swing that goes completely wrong. "
-                f"d20 roll was {attack_roll}. End with a complete sentence."
-            )
-        elif critical == "success":
-            prompt = (
-                f"You are a gritty DM. Write 3-4 detailed, brutal, graphic sentences describing {attacker.name} "
-                f"landing a DEVASTATING CRITICAL HIT on {defender.name} with {attacker.weapon}. "
-                f"Deal {damage} damage! Be extremely violent and vivid. Describe blood, impact, and destruction. "
-                f"d20 roll was {attack_roll}. End with a complete sentence."
-            )
-        elif hit:
-            prompt = (
-                f"You are a gritty DM. Write 2-3 detailed, vivid sentences describing {attacker.name} "
-                f"successfully hitting {defender.name} with {attacker.weapon}, dealing {damage} damage. "
-                f"Include sensory details about the strike, the impact, and the effect on {defender.name}. "
-                f"d20 roll was {attack_roll}. End with a complete sentence."
-            )
-        else:
-            prompt = (
-                f"You are a gritty DM. Write 2-3 dramatic sentences describing {attacker.name} "
-                f"MISSING their attack against {defender.name}. Make it tense and describe how close "
-                f"the weapon comes or how the attack glances off harmlessly. d20 roll was {attack_roll}. "
-                f"End with a complete sentence."
-            )
+            return (f"{attacker.name} swings {attacker.weapon} wildly, completely missing {defender.name}. "
+                   f"The weapon whistles through empty air as {attacker.name} stumbles off-balance. "
+                   f"A critical failure that leaves {attacker.name} vulnerable!")
         
-        try:
-            output = self.pipe(prompt, max_new_tokens=150, do_sample=True, temperature=0.85, top_p=0.9)
-            response = output[0]['generated_text']
-            narrative = self._extract_narrative(response)
-            return narrative if len(narrative) > 30 else prompt.split("describing ")[1][:150]
-        except:
-            if hit and damage > 0:
-                return f"{attacker.name} unleashes a vicious strike with {attacker.weapon}! {defender.name} recoils as blood sprays across the wasteland. The impact sends shockwaves through the air!"
-            elif critical == "failure":
-                return f"{attacker.name} stumbles catastrophically, their {attacker.weapon} swinging wildly through empty air. Complete loss of balance!"
-            else:
-                return f"{attacker.name} swings at {defender.name} but the attack goes completely wide, missing entirely."
+        elif critical == "success":
+            return (f"{attacker.name} unleashes a DEVASTATING strike with {attacker.weapon}! "
+                   f"The blow connects with a sickening crunch, slamming into {defender.name} for {damage} damage! "
+                   f"Blood sprays across the wasteland as {defender.name} reels from the catastrophic impact!")
+        
+        elif hit:
+            return (f"{attacker.name} strikes {defender.name} with {attacker.weapon}, dealing {damage} damage! "
+                   f"The weapon connects with brutal force, drawing blood. "
+                   f"{defender.name} staggers backward from the impact.")
+        
+        else:
+            return (f"{attacker.name} attempts to hit {defender.name} but the attack misses! "
+                   f"The weapon passes just inches away from its target. "
+                   f"{defender.name} sidesteps the incoming attack with practiced ease.")
 
     def narrate_death(self, defeated: 'CombatCharacter', killer: 'CombatCharacter') -> str:
-        """Generate verbose death narration"""
-        prompt = (
-            f"You are a gritty post-apocalyptic DM. Write 2-3 detailed, dramatic sentences describing "
-            f"the DEATH of {defeated.name}, defeated by {killer.name}. Be graphic and vivid about the finality. "
-            f"Describe the wasteland claiming another life, the collapse, the silence. End with a complete sentence."
-        )
-        try:
-            output = self.pipe(prompt, max_new_tokens=120, do_sample=True, temperature=0.8, top_p=0.9)
-            response = output[0]['generated_text']
-            narrative = self._extract_narrative(response)
-            return narrative if len(narrative) > 30 else f"{defeated.name} falls, their body going limp as the wasteland claims them. Death has come."
-        except:
-            return f"{defeated.name} collapses into the dust, their final breath stolen by the wasteland. They lie motionless as the sand begins to cover their remains."
+        """Generate death narration"""
+        return (f"{defeated.name} collapses to the ground, their life extinguished by {killer.name}. "
+               f"Another body falls in the wasteland. Another story ends. "
+               f"The desert claims yet another soul.")
 
     def narrate_defend(self, character: 'CombatCharacter') -> str:
-        """Generate verbose defend narration"""
-        prompt = (
-            f"You are a gritty DM. Write 2-3 vivid sentences describing {character.name} "
-            f"raising their defenses and bracing for impact. Describe the tactical positioning, "
-            f"the readiness, the tensing of muscles. End with a complete sentence."
-        )
-        try:
-            output = self.pipe(prompt, max_new_tokens=100, do_sample=True, temperature=0.8, top_p=0.9)
-            response = output[0]['generated_text']
-            narrative = self._extract_narrative(response)
-            return narrative if len(narrative) > 30 else f"{character.name} raises their defenses and braces for incoming attacks!"
-        except:
-            return f"{character.name} assumes a defensive stance, muscles tense, ready to weather the coming storm."
+        """Generate defend narration"""
+        return (f"{character.name} takes a defensive stance, bracing for incoming attacks. "
+               f"Every muscle tenses in preparation. "
+               f"They're ready to weather whatever comes next.")
 
-    def narrate_inventory_use(self, character: 'CombatCharacter', item: Item) -> str:
-        """Generate narration for using an item"""
-        prompt = (
-            f"You are a gritty DM. Write 2 vivid sentences describing {character.name} "
-            f"using {item.name} ({item.item_type}) in combat. Effect: {item.description}. "
-            f"Make it dramatic and show the impact of using this item. End with a complete sentence."
-        )
-        try:
-            output = self.pipe(prompt, max_new_tokens=80, do_sample=True, temperature=0.8, top_p=0.9)
-            response = output[0]['generated_text']
-            narrative = self._extract_narrative(response)
-            return narrative if len(narrative) > 30 else f"{character.name} uses {item.name}! {item.description}"
-        except:
-            return f"{character.name} deploys {item.name}! {item.description}"
+    def narrate_item_use(self, character: 'CombatCharacter', item: Item) -> str:
+        """Generate item usage narration"""
+        if "health" in item.name.lower():
+            return (f"{character.name} quickly deploys a {item.name}! "
+                   f"Relief floods through their body as wounds begin to close. "
+                   f"They're ready to continue fighting.")
+        else:
+            return (f"{character.name} uses {item.name}! {item.description}")
 
     def narrate_victory(self, player: 'CombatCharacter') -> str:
-        """Generate verbose victory narration"""
-        prompt = (
-            f"You are a gritty post-apocalyptic DM. Write 3-4 detailed, dramatic sentences "
-            f"describing {player.name}'s VICTORY. They stand bloodied but triumphant over their defeated enemies. "
-            f"Describe the wasteland, their survival, their strength. Make it epic and complete. "
-            f"End with a complete sentence."
-        )
-        try:
-            output = self.pipe(prompt, max_new_tokens=150, do_sample=True, temperature=0.8, top_p=0.9)
-            response = output[0]['generated_text']
-            narrative = self._extract_narrative(response)
-            return narrative if len(narrative) > 50 else f"{player.name} stands victorious amidst the ruins of their enemies! The wasteland falls silent. They have survived."
-        except:
-            return f"{player.name} stands victorious, breathing heavily amid the corpses of fallen enemies. The wasteland trembles beneath their feet—a survivor's domain."
+        """Generate victory narration"""
+        return (f"{player.name} stands victorious over their fallen enemies! "
+               f"Blood stains the wasteland, but {player.name} survives. "
+               f"The desert has tested them, and they have emerged triumphant.")
 
     def narrate_defeat(self) -> str:
-        """Generate verbose defeat narration"""
-        prompt = (
-            f"You are a gritty post-apocalyptic DM. Write 3-4 detailed, dramatic sentences "
-            f"describing a warrior's DEFEAT in the wasteland. Their final moments, darkness closing in, "
-            f"the wasteland claiming yet another life. Make it poignant and complete. End with a complete sentence."
-        )
-        try:
-            output = self.pipe(prompt, max_new_tokens=150, do_sample=True, temperature=0.8, top_p=0.9)
-            response = output[0]['generated_text']
-            narrative = self._extract_narrative(response)
-            return narrative if len(narrative) > 50 else f"Darkness falls as your vision fades. The wasteland has claimed you, adding your bones to its endless graveyard."
-        except:
-            return f"Your vision blurs as consciousness slips away. The wasteland swallows you whole, and darkness becomes eternal. Another soul lost to the desert."
+        """Generate defeat narration"""
+        return (f"Darkness closes in as your vision fades. "
+               f"The wasteland claims you as yet another victim. "
+               f"Your story ends here, in the sand.")
 
 # --- PART 2: Enhanced Combat Game ---
 class AdvancedCombatGame:
     def __init__(self):
         self.ai = GameAI()
         
-        # Initialize player with inventory
+        # Initialize player with detailed equipment
         self.player = CombatCharacter(
             name="You",
             hp=100,
@@ -303,13 +252,23 @@ class AdvancedCombatGame:
             defense=2,
             weapon="Plasma Rifle",
             weapon_bonus=3,
+            location="Wasteland Settlement",
             is_player=True,
             inventory=[
-                Item("Health Pack", "consumable", description="Restores 25 HP"),
-                Item("Combat Armor", "armor", armor_bonus=2, description="Kevlar reinforced"),
-                Item("Energy Cell", "consumable", description="Refills energy weapon")
+                Item("Plasma Rifle", "weapon", damage_bonus=3, to_hit_bonus=0, 
+                     description="High-tech energy weapon", rarity=ItemRarity.RARE),
+                Item("Laser Rifle", "weapon", damage_bonus=4, to_hit_bonus=1,
+                     description="Precise energy weapon", rarity=ItemRarity.RARE),
+                Item("Combat Armor", "armor", armor_bonus=2, 
+                     description="Kevlar reinforced", rarity=ItemRarity.UNCOMMON),
+                Item("Health Pack", "consumable", damage_bonus=25,
+                     description="Restores 25 HP", rarity=ItemRarity.COMMON),
+                Item("Energy Cell", "consumable",
+                     description="Refills energy weapon", rarity=ItemRarity.COMMON)
             ]
         )
+        self.player.active_weapon = self.player.inventory[0]
+        self.player.active_armor = self.player.inventory[2]
         
         # Initialize enemies
         self.enemies: List[CombatCharacter] = [
@@ -321,6 +280,7 @@ class AdvancedCombatGame:
                 defense=1,
                 weapon="Super Sledge",
                 weapon_bonus=3,
+                location="Wasteland - Northeast",
                 inventory=[Item("Scrap Metal", "junk", description="Worthless but heavy")]
             ),
             CombatCharacter(
@@ -331,6 +291,7 @@ class AdvancedCombatGame:
                 defense=0,
                 weapon="Claws",
                 weapon_bonus=1,
+                location="Wasteland - Underground",
                 inventory=[Item("Spoiled Meat", "junk", description="Smells of death")]
             )
         ]
@@ -341,7 +302,7 @@ class AdvancedCombatGame:
         self.in_combat = True
         
     def roll_initiative(self):
-        """Roll and display initiative for all combatants"""
+        """Roll and display initiative"""
         print(f"\n{CLR_YELLOW}{'='*90}")
         print(f"INITIATIVE PHASE - ROLLING FOR COMBAT ORDER")
         print(f"{'='*90}{CLR_RESET}\n")
@@ -352,9 +313,8 @@ class AdvancedCombatGame:
             combatant.initiative_roll = d20_roll + modifier
             
             role = f"{CLR_GREEN}[PLAYER]{CLR_RESET}" if combatant.is_player else f"{CLR_RED}[ENEMY]{CLR_RESET}"
-            print(f"{role} {combatant.name:20} rolled d20: {d20_roll:2} + {modifier} = {combatant.initiative_roll:3}")
+            print(f"{role} {combatant.name:20} d20: {d20_roll:2} + {modifier} = {combatant.initiative_roll:3}")
         
-        # Sort by initiative
         self.initiative_order = sorted(self.all_combatants, key=lambda x: x.initiative_roll, reverse=True)
         
         print(f"\n{CLR_CYAN}{'='*90}")
@@ -366,20 +326,20 @@ class AdvancedCombatGame:
         print()
 
     def display_combat_status(self):
-        """Display all combatants' status with colors"""
+        """Display combat status"""
         print(f"\n{CLR_BLUE}{'='*90}")
         print(f"ROUND {self.round_count} - BATTLEFIELD STATUS")
         print(f"{'='*90}{CLR_RESET}\n")
         
-        # Player
         print(f"{CLR_GREEN}[PLAYER]{CLR_RESET}")
         print(self.player.display_status())
+        print(f"  Location: {self.player.location}")
         
-        # Enemies
         print(f"\n{CLR_RED}[ENEMIES]{CLR_RESET}")
         for enemy in self.enemies:
             if enemy.hp > 0:
                 print(enemy.display_status())
+                print(f"  Location: {enemy.location}")
         print()
 
     def parse_player_action(self, command: str):
@@ -398,8 +358,12 @@ class AdvancedCombatGame:
             return "defend", None
         elif action in ["use", "u"] and len(parts) > 1:
             return "use", " ".join(parts[1:])
+        elif action in ["equip", "eq"] and len(parts) > 1:
+            return "equip", " ".join(parts[1:])
         elif action in ["inventory", "inv", "i"]:
             return "inventory", None
+        elif action in ["status", "s"]:
+            return "status", None
         elif action in ["flee", "f"]:
             return "flee", None
         elif action in ["help", "h", "?"]:
@@ -422,20 +386,27 @@ class AdvancedCombatGame:
         return None
 
     def roll_attack(self, attacker: CombatCharacter, defender: CombatCharacter) -> Dict:
-        """Execute attack roll"""
+        """Execute attack roll with bonuses"""
         d20_roll = random.randint(1, 20)
-        total_roll = d20_roll + attacker.atk
+        
+        # Apply to-hit bonuses
+        to_hit_bonus = attacker.active_weapon.to_hit_bonus if attacker.active_weapon else 0
+        total_roll = d20_roll + attacker.atk + to_hit_bonus
+        
+        # Defense AC
         defense_ac = 12 + (defender.defense if defender.active_armor else 0)
         
         if d20_roll == 1:
             return {"hit": False, "d20": d20_roll, "total": total_roll, "damage": 0, "critical": "failure"}
         elif d20_roll == 20:
             base_damage = random.randint(attacker.atk + 5, attacker.atk + 10)
-            damage = (base_damage + attacker.weapon_bonus) * 2
+            dmg_bonus = attacker.active_weapon.damage_bonus if attacker.active_weapon else 0
+            damage = (base_damage + attacker.weapon_bonus + dmg_bonus) * 2
             return {"hit": True, "d20": d20_roll, "total": total_roll, "damage": damage, "critical": "success"}
         elif total_roll >= defense_ac:
             base_damage = random.randint(attacker.atk, attacker.atk + 6)
-            damage = base_damage + attacker.weapon_bonus
+            dmg_bonus = attacker.active_weapon.damage_bonus if attacker.active_weapon else 0
+            damage = base_damage + attacker.weapon_bonus + dmg_bonus
             return {"hit": True, "d20": d20_roll, "total": total_roll, "damage": damage, "critical": None}
         else:
             return {"hit": False, "d20": d20_roll, "total": total_roll, "damage": 0, "critical": None}
@@ -446,28 +417,49 @@ class AdvancedCombatGame:
         
         while True:
             print(f"{CLR_GREEN}[YOUR TURN]{CLR_RESET}")
-            print(f"{CLR_YELLOW}Commands: attack <enemy>, defend, use <item>, inventory, flee, help{CLR_RESET}")
+            print(f"{CLR_YELLOW}Commands: attack <enemy>, defend, use <item>, equip <weapon>, inventory, status, flee, help{CLR_RESET}")
             command = input(f"{CLR_GREEN}> {CLR_RESET}").strip()
             
             action, target = self.parse_player_action(command)
             
             if action == "help":
-                print(f"{CLR_CYAN}\n[COMMAND HELP]")
-                print(f"  attack <enemy>  - Attack by name (Super Mutant, Feral Ghoul)")
-                print(f"  defend          - Raise defenses, reduce damage this round")
-                print(f"  use <item>      - Use consumable from inventory")
-                print(f"  inventory       - View your items")
-                print(f"  flee            - Attempt to escape (DC 12)")
-                print(f"  help            - Show this help{CLR_RESET}\n")
+                print(f"{CLR_CYAN}\n[COMMANDS]")
+                print(f"  attack <enemy>    - Attack by name")
+                print(f"  defend            - Raise defenses")
+                print(f"  use <item>        - Use consumable")
+                print(f"  equip <weapon>    - Equip different weapon")
+                print(f"  inventory         - View items")
+                print(f"  status            - View full status")
+                print(f"  flee              - Escape (DC 12)")
+                print(f"  help              - Show this{CLR_RESET}\n")
                 continue
             
             if action == "inventory":
                 print(f"\n{self.player.display_inventory()}\n")
                 continue
             
+            if action == "status":
+                print(self.player.get_full_status())
+                continue
+            
             if action is None:
                 print(f"{CLR_RED}Invalid command. Type 'help' for options.{CLR_RESET}\n")
                 continue
+            
+            if action == "equip":
+                if not target:
+                    print(f"{CLR_RED}Equip what? Specify weapon name.{CLR_RESET}\n")
+                    continue
+                
+                item = self.find_item(self.player, target)
+                if not item or item.item_type != "weapon":
+                    print(f"{CLR_RED}Weapon not found.{CLR_RESET}\n")
+                    continue
+                
+                self.player.active_weapon = item
+                self.player.weapon = item.name
+                print(f"{CLR_GREEN}Equipped {item.name}! (+{item.to_hit_bonus} to-hit, +{item.damage_bonus} damage){CLR_RESET}\n")
+                return "equip"
             
             if action == "attack":
                 if not target:
@@ -482,7 +474,7 @@ class AdvancedCombatGame:
                 result = self.roll_attack(self.player, enemy)
                 
                 print(f"\n{CLR_BLUE}[ATTACK ROLL]{CLR_RESET}")
-                print(f"{CLR_CYAN}d20: {result['d20']} + {self.player.atk} = {result['total']}{CLR_RESET}")
+                print(f"{CLR_CYAN}d20: {result['d20']} + {self.player.atk} (ATK) + {self.player.active_weapon.to_hit_bonus if self.player.active_weapon else 0} (weapon) = {result['total']}{CLR_RESET}")
                 
                 if result["hit"]:
                     enemy.hp = max(enemy.hp - result["damage"], 0)
@@ -492,13 +484,13 @@ class AdvancedCombatGame:
                     status = f"{CLR_RED}CRITICAL FAILURE!{CLR_RESET}" if result["critical"] == "failure" else f"{CLR_RED}MISS!{CLR_RESET}"
                     print(f"{status}\n")
                 
-                narrative = self.ai.narrate_attack(self.player, enemy, result['d20'], result['total'], 
+                narrative = self.ai.narrate_attack(self.player, enemy, result['d20'], 
                                                   result["hit"], result["damage"], result["critical"])
                 print(f"{CLR_MAGENTA}{narrative}{CLR_RESET}\n")
                 
                 if enemy.hp <= 0:
                     death_narration = self.ai.narrate_death(enemy, self.player)
-                    print(f"{CLR_RED}[DEATH] {death_narration}{CLR_RESET}\n")
+                    print(f"{CLR_RED}[DEATH]{CLR_RESET} {death_narration}\n")
                     self.enemies.remove(enemy)
                     if enemy in self.initiative_order:
                         self.initiative_order.remove(enemy)
@@ -506,9 +498,8 @@ class AdvancedCombatGame:
                 return "attack"
             
             elif action == "defend":
-                print(f"\n{CLR_BLUE}[DEFENSIVE STANCE]{CLR_RESET}\n")
                 narration = self.ai.narrate_defend(self.player)
-                print(f"{CLR_MAGENTA}{narration}{CLR_RESET}\n")
+                print(f"\n{CLR_MAGENTA}{narration}{CLR_RESET}\n")
                 return "defend"
             
             elif action == "use":
@@ -518,15 +509,15 @@ class AdvancedCombatGame:
                 
                 item = self.find_item(self.player, target)
                 if not item:
-                    print(f"{CLR_RED}Item not found in inventory.{CLR_RESET}\n")
+                    print(f"{CLR_RED}Item not found.{CLR_RESET}\n")
                     continue
                 
-                narration = self.ai.narrate_inventory_use(self.player, item)
-                print(f"{CLR_MAGENTA}{narration}{CLR_RESET}\n")
+                narration = self.ai.narrate_item_use(self.player, item)
+                print(f"\n{CLR_MAGENTA}{narration}{CLR_RESET}\n")
                 
                 if item.item_type == "consumable":
                     if "health" in item.name.lower():
-                        heal_amount = 25
+                        heal_amount = item.damage_bonus
                         self.player.hp = min(self.player.hp + heal_amount, self.player.max_hp)
                         print(f"{CLR_GREEN}Restored {heal_amount} HP! Current: {self.player.hp}/{self.player.max_hp}{CLR_RESET}\n")
                     self.player.inventory.remove(item)
@@ -535,8 +526,7 @@ class AdvancedCombatGame:
             
             elif action == "flee":
                 flee_roll = random.randint(1, 20)
-                print(f"\n{CLR_BLUE}[FLEE ATTEMPT]{CLR_RESET}")
-                print(f"{CLR_CYAN}Flee Roll: {flee_roll}{CLR_RESET}\n")
+                print(f"{CLR_BLUE}[FLEE ATTEMPT] Flee Roll: {flee_roll}{CLR_RESET}\n")
                 
                 if flee_roll > 12:
                     print(f"{CLR_GREEN}You escape the combat!{CLR_RESET}\n")
@@ -547,7 +537,7 @@ class AdvancedCombatGame:
                     continue
 
     def execute_enemy_turn(self, enemy: CombatCharacter):
-        """Execute enemy's turn with narration"""
+        """Execute enemy's turn"""
         if enemy.hp <= 0 or not self.enemies:
             return
         
@@ -555,7 +545,7 @@ class AdvancedCombatGame:
         result = self.roll_attack(enemy, target)
         
         print(f"{CLR_RED}[{enemy.name.upper()} ATTACKS]{CLR_RESET}")
-        print(f"{CLR_CYAN}d20: {result['d20']} + {enemy.atk} = {result['total']}{CLR_RESET}")
+        print(f"{CLR_CYAN}d20: {result['d20']} + {enemy.atk} (ATK) = {result['total']}{CLR_RESET}")
         
         if result["hit"]:
             target.hp = max(target.hp - result["damage"], 0)
@@ -565,14 +555,33 @@ class AdvancedCombatGame:
             status = f"{CLR_GREEN}CRITICAL FAILURE!{CLR_RESET}" if result["critical"] == "failure" else f"{CLR_GREEN}MISS!{CLR_RESET}"
             print(f"{status}\n")
         
-        narrative = self.ai.narrate_attack(enemy, target, result['d20'], result['total'], 
-                                          result["hit"], result["damage"], result["critical"])
+        narrative = self.ai.narrate_attack(enemy, target, result['d20'], result["hit"], 
+                                          result["damage"], result["critical"])
         print(f"{CLR_MAGENTA}{narrative}{CLR_RESET}\n")
         
         if target.hp <= 0:
             death_narration = self.ai.narrate_defeat()
             print(f"{CLR_RED}[YOUR DEATH] {death_narration}{CLR_RESET}\n")
             self.in_combat = False
+
+    def show_end_menu(self):
+        """Show menu after game ends"""
+        while True:
+            print(f"\n{CLR_YELLOW}{'='*90}")
+            print(f"GAME OVER")
+            print(f"{'='*90}{CLR_RESET}")
+            print(f"\n{CLR_CYAN}Options:{CLR_RESET}")
+            print(f"  new   - Start a new game")
+            print(f"  exit  - Exit the program\n")
+            
+            command = input(f"{CLR_GREEN}> {CLR_RESET}").strip().lower()
+            
+            if command in ["new", "n"]:
+                return True
+            elif command in ["exit", "e", "quit", "q"]:
+                return False
+            else:
+                print(f"{CLR_RED}Invalid command.{CLR_RESET}")
 
     def run(self):
         """Main game loop"""
@@ -588,7 +597,8 @@ class AdvancedCombatGame:
         while self.in_combat and self.player.hp > 0 and len(self.enemies) > 0:
             self.round_count += 1
             
-            round_narration = self.ai.narrate_round_start(self.round_count)
+            active = [c.name for c in self.initiative_order if c.hp > 0]
+            round_narration = self.ai.narrate_round_start(self.round_count, active)
             print(f"\n{CLR_YELLOW}[ROUND {self.round_count}]{CLR_RESET}")
             print(f"{CLR_MAGENTA}{round_narration}{CLR_RESET}\n")
             
@@ -615,14 +625,33 @@ class AdvancedCombatGame:
                 print(f"DEFEAT!")
                 print(f"{'='*90}{CLR_RESET}\n")
                 self.in_combat = False
-            # NO MORE "PRESS ENTER" - Combat flows continuously
+
+def main():
+    """Main program loop"""
+    while True:
+        game = AdvancedCombatGame()
+        game.run()
+        
+        if not game.show_end_menu():
+            break
+    
+    print(f"\n{CLR_YELLOW}Thanks for playing! Exiting in 10 seconds...{CLR_RESET}\n")
+    
+    try:
+        import time
+        time.sleep(10)
+    except:
+        pass
 
 if __name__ == "__main__":
     try:
-        game = AdvancedCombatGame()
-        game.run()
+        main()
     except KeyboardInterrupt:
-        print(f"\n{CLR_YELLOW}Game exited.{CLR_RESET}")
+        print(f"\n{CLR_YELLOW}Game interrupted.{CLR_RESET}")
+        import time
+        time.sleep(5)
     except Exception as e:
         print(f"{CLR_RED}Error occurred:{CLR_RESET}")
         traceback.print_exc()
+        import time
+        time.sleep(10)
