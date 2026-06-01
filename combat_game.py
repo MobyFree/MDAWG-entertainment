@@ -88,7 +88,7 @@ class CombatCharacter:
             items_str += f"  {i}. {rarity_color}{item.name}{CLR_RESET} ({item.item_type}) - {item.description}\n"
         return items_str
 
-# --- PART 1: Advanced DM AI with Clean Combat Narration ---
+# --- PART 1: Advanced DM AI with Verbose Combat Narration ---
 class GameAI:
     def __init__(self):
         print(f"{CLR_YELLOW}[INIT] Loading AI DM model...{CLR_RESET}", flush=True)
@@ -96,139 +96,200 @@ class GameAI:
         self.pipe = pipeline("text-generation", model="Qwen/Qwen2.5-0.5B-Instruct", device="cpu")
         print(f"{CLR_GREEN}[INIT] AI DM loaded and ready!{CLR_RESET}\n", flush=True)
 
-    def _clean_response(self, text: str, max_length: int = 150) -> str:
-        """Clean AI response to remove prompt leakage"""
-        # Remove common prompt artifacts
-        artifacts = [
-            "Write a", "write a", "Describe", "describe", "You are", "you are",
-            "In the", "The", "A gritty", "Post-apocalyptic", "1-sentence", "2-3 sentence",
-            "1-2 sentence", "very brief", "Brief", "Brief.", "Make it", "Gritty tone"
+    def _extract_narrative(self, text: str) -> str:
+        """Extract clean narrative from AI response"""
+        # Remove prompt remnants
+        lines = text.split('\n')
+        narrative = ' '.join([line.strip() for line in lines if line.strip()])
+        
+        # Remove common prompt artifacts at start
+        artifacts_start = [
+            "You are a gritty", "Write a", "Describe", "Generate", "Create",
+            "In this scenario", "The player", "A gritty", "Post-apocalyptic",
+            "This is a", "Here is"
         ]
         
-        for artifact in artifacts:
-            if text.startswith(artifact):
-                text = text[len(artifact):].strip()
+        for artifact in artifacts_start:
+            if narrative.lower().startswith(artifact.lower()):
+                narrative = narrative[len(artifact):].strip()
                 break
         
-        # Remove trailing incomplete sentences
-        if text.endswith(" that"):
-            text = text[:-5]
-        if text.endswith(" who"):
-            text = text[:-4]
-        if text.endswith(" the"):
-            text = text[:-4]
-        if text.endswith(" is"):
-            text = text[:-3]
-        if text.endswith(" and"):
-            text = text[:-4]
+        # Ensure it ends with a complete sentence
+        while narrative and narrative[-1] not in '.!?':
+            # Find last complete sentence
+            last_period = narrative.rfind('.')
+            last_exclaim = narrative.rfind('!')
+            last_question = narrative.rfind('?')
+            
+            last_punct = max(last_period, last_exclaim, last_question)
+            
+            if last_punct > 0:
+                narrative = narrative[:last_punct + 1]
+            else:
+                # No punctuation found, add one at end
+                if len(narrative) > 3:
+                    narrative = narrative.rstrip() + '.'
+                break
         
-        # Truncate and ensure clean ending
-        if len(text) > max_length:
-            text = text[:max_length].rsplit(' ', 1)[0] + "..."
-        
-        return text.strip() if text.strip() else None
+        return narrative.strip()
 
     def narrate_combat_start(self, player: 'CombatCharacter', enemies: List['CombatCharacter']) -> str:
-        """Generate opening narration for combat"""
+        """Generate opening narration for combat - verbose and descriptive"""
         enemy_names = ", ".join([e.name for e in enemies])
-        prompt = f"{player.name} faces {enemy_names} in a brutal post-apocalyptic wasteland battle!"
+        prompt = (
+            f"You are a gritty post-apocalyptic DM. Write 3-4 detailed, vivid sentences describing "
+            f"the start of an intense combat encounter. The player faces {enemy_names} in the wasteland. "
+            f"Use descriptive language about the environment, atmosphere, and the menacing presence of enemies. "
+            f"Make it dramatic and immersive. End with a complete sentence."
+        )
         
         try:
-            output = self.pipe(prompt, max_new_tokens=60, do_sample=True, temperature=0.7)
+            output = self.pipe(prompt, max_new_tokens=150, do_sample=True, temperature=0.8, top_p=0.9)
             response = output[0]['generated_text']
-            cleaned = self._clean_response(response, 120)
-            return cleaned if cleaned else prompt
+            narrative = self._extract_narrative(response)
+            return narrative if len(narrative) > 50 else prompt.split("describes ")[1][:150]
         except:
-            return prompt
+            return f"The wasteland trembles as {enemy_names} emerge from the shadows, their weapons gleaming with menace. The air grows thick with tension as you lock eyes with your enemies. This battle will determine who walks away alive—and who becomes another skeleton in the sand."
 
     def narrate_round_start(self, round_num: int) -> str:
-        """Generate narration for round start"""
-        prompt = f"Round {round_num} of combat erupts!"
+        """Generate verbose narration for round start"""
+        prompt = (
+            f"You are a gritty post-apocalyptic DM. Write 2-3 detailed, vivid sentences describing "
+            f"the start of combat round {round_num}. Use sensory details about the combat intensity, "
+            f"movement, tension, and atmosphere. Make it dramatic and immersive. End with a complete sentence."
+        )
         try:
-            output = self.pipe(prompt, max_new_tokens=40, do_sample=True, temperature=0.6)
+            output = self.pipe(prompt, max_new_tokens=100, do_sample=True, temperature=0.8, top_p=0.9)
             response = output[0]['generated_text']
-            cleaned = self._clean_response(response, 80)
-            return cleaned if cleaned else prompt
+            narrative = self._extract_narrative(response)
+            return narrative if len(narrative) > 30 else f"Round {round_num} erupts with renewed fury as combatants clash once more!"
         except:
-            return prompt
+            return f"Round {round_num} rages on! The wasteland shakes with the violence of combat!"
 
     def narrate_attack(self, attacker: 'CombatCharacter', defender: 'CombatCharacter', 
-                      attack_roll: int, hit: bool, damage: int = 0, critical: Optional[str] = None) -> str:
-        """Generate vivid attack narration"""
+                      attack_roll: int, total_roll: int, hit: bool, damage: int = 0, 
+                      critical: Optional[str] = None) -> str:
+        """Generate verbose attack narration"""
         
         if critical == "failure":
-            prompt = f"{attacker.name} critically fails attacking {defender.name}, completely botching the strike!"
+            prompt = (
+                f"You are a gritty DM. Write 2-3 detailed, dramatic sentences describing {attacker.name} "
+                f"CRITICALLY FAILING their attack against {defender.name}. Make it embarrassing and vivid. "
+                f"Describe the botched movement, the weapon swing that goes completely wrong. "
+                f"d20 roll was {attack_roll}. End with a complete sentence."
+            )
         elif critical == "success":
-            prompt = f"{attacker.name} lands a devastating CRITICAL HIT on {defender.name} with {attacker.weapon}, dealing {damage} damage!"
+            prompt = (
+                f"You are a gritty DM. Write 3-4 detailed, brutal, graphic sentences describing {attacker.name} "
+                f"landing a DEVASTATING CRITICAL HIT on {defender.name} with {attacker.weapon}. "
+                f"Deal {damage} damage! Be extremely violent and vivid. Describe blood, impact, and destruction. "
+                f"d20 roll was {attack_roll}. End with a complete sentence."
+            )
         elif hit:
-            prompt = f"{attacker.name} hits {defender.name} with {attacker.weapon}, dealing {damage} damage!"
+            prompt = (
+                f"You are a gritty DM. Write 2-3 detailed, vivid sentences describing {attacker.name} "
+                f"successfully hitting {defender.name} with {attacker.weapon}, dealing {damage} damage. "
+                f"Include sensory details about the strike, the impact, and the effect on {defender.name}. "
+                f"d20 roll was {attack_roll}. End with a complete sentence."
+            )
         else:
-            prompt = f"{attacker.name} swings at {defender.name} but the attack misses completely!"
+            prompt = (
+                f"You are a gritty DM. Write 2-3 dramatic sentences describing {attacker.name} "
+                f"MISSING their attack against {defender.name}. Make it tense and describe how close "
+                f"the weapon comes or how the attack glances off harmlessly. d20 roll was {attack_roll}. "
+                f"End with a complete sentence."
+            )
         
         try:
-            output = self.pipe(prompt, max_new_tokens=50, do_sample=True, temperature=0.7)
+            output = self.pipe(prompt, max_new_tokens=150, do_sample=True, temperature=0.85, top_p=0.9)
             response = output[0]['generated_text']
-            cleaned = self._clean_response(response, 100)
-            return cleaned if cleaned else prompt
+            narrative = self._extract_narrative(response)
+            return narrative if len(narrative) > 30 else prompt.split("describing ")[1][:150]
         except:
-            return prompt
+            if hit and damage > 0:
+                return f"{attacker.name} unleashes a vicious strike with {attacker.weapon}! {defender.name} recoils as blood sprays across the wasteland. The impact sends shockwaves through the air!"
+            elif critical == "failure":
+                return f"{attacker.name} stumbles catastrophically, their {attacker.weapon} swinging wildly through empty air. Complete loss of balance!"
+            else:
+                return f"{attacker.name} swings at {defender.name} but the attack goes completely wide, missing entirely."
 
     def narrate_death(self, defeated: 'CombatCharacter', killer: 'CombatCharacter') -> str:
-        """Generate death narration"""
-        prompt = f"{defeated.name} falls, defeated by {killer.name}! The wasteland claims another victim."
+        """Generate verbose death narration"""
+        prompt = (
+            f"You are a gritty post-apocalyptic DM. Write 2-3 detailed, dramatic sentences describing "
+            f"the DEATH of {defeated.name}, defeated by {killer.name}. Be graphic and vivid about the finality. "
+            f"Describe the wasteland claiming another life, the collapse, the silence. End with a complete sentence."
+        )
         try:
-            output = self.pipe(prompt, max_new_tokens=40, do_sample=True, temperature=0.7)
+            output = self.pipe(prompt, max_new_tokens=120, do_sample=True, temperature=0.8, top_p=0.9)
             response = output[0]['generated_text']
-            cleaned = self._clean_response(response, 100)
-            return cleaned if cleaned else prompt
+            narrative = self._extract_narrative(response)
+            return narrative if len(narrative) > 30 else f"{defeated.name} falls, their body going limp as the wasteland claims them. Death has come."
         except:
-            return prompt
+            return f"{defeated.name} collapses into the dust, their final breath stolen by the wasteland. They lie motionless as the sand begins to cover their remains."
 
     def narrate_defend(self, character: 'CombatCharacter') -> str:
-        """Generate defend action narration"""
-        prompt = f"{character.name} raises defenses and braces for impact!"
+        """Generate verbose defend narration"""
+        prompt = (
+            f"You are a gritty DM. Write 2-3 vivid sentences describing {character.name} "
+            f"raising their defenses and bracing for impact. Describe the tactical positioning, "
+            f"the readiness, the tensing of muscles. End with a complete sentence."
+        )
         try:
-            output = self.pipe(prompt, max_new_tokens=30, do_sample=True, temperature=0.6)
+            output = self.pipe(prompt, max_new_tokens=100, do_sample=True, temperature=0.8, top_p=0.9)
             response = output[0]['generated_text']
-            cleaned = self._clean_response(response, 80)
-            return cleaned if cleaned else prompt
+            narrative = self._extract_narrative(response)
+            return narrative if len(narrative) > 30 else f"{character.name} raises their defenses and braces for incoming attacks!"
         except:
-            return prompt
+            return f"{character.name} assumes a defensive stance, muscles tense, ready to weather the coming storm."
 
     def narrate_inventory_use(self, character: 'CombatCharacter', item: Item) -> str:
         """Generate narration for using an item"""
-        prompt = f"{character.name} uses {item.name}! {item.description}"
+        prompt = (
+            f"You are a gritty DM. Write 2 vivid sentences describing {character.name} "
+            f"using {item.name} ({item.item_type}) in combat. Effect: {item.description}. "
+            f"Make it dramatic and show the impact of using this item. End with a complete sentence."
+        )
         try:
-            output = self.pipe(prompt, max_new_tokens=30, do_sample=True, temperature=0.6)
+            output = self.pipe(prompt, max_new_tokens=80, do_sample=True, temperature=0.8, top_p=0.9)
             response = output[0]['generated_text']
-            cleaned = self._clean_response(response, 80)
-            return cleaned if cleaned else prompt
+            narrative = self._extract_narrative(response)
+            return narrative if len(narrative) > 30 else f"{character.name} uses {item.name}! {item.description}"
         except:
-            return prompt
+            return f"{character.name} deploys {item.name}! {item.description}"
 
     def narrate_victory(self, player: 'CombatCharacter') -> str:
-        """Generate victory narration"""
-        prompt = f"Victory! {player.name} stands victorious amidst the ruins of their enemies!"
+        """Generate verbose victory narration"""
+        prompt = (
+            f"You are a gritty post-apocalyptic DM. Write 3-4 detailed, dramatic sentences "
+            f"describing {player.name}'s VICTORY. They stand bloodied but triumphant over their defeated enemies. "
+            f"Describe the wasteland, their survival, their strength. Make it epic and complete. "
+            f"End with a complete sentence."
+        )
         try:
-            output = self.pipe(prompt, max_new_tokens=40, do_sample=True, temperature=0.7)
+            output = self.pipe(prompt, max_new_tokens=150, do_sample=True, temperature=0.8, top_p=0.9)
             response = output[0]['generated_text']
-            cleaned = self._clean_response(response, 100)
-            return cleaned if cleaned else prompt
+            narrative = self._extract_narrative(response)
+            return narrative if len(narrative) > 50 else f"{player.name} stands victorious amidst the ruins of their enemies! The wasteland falls silent. They have survived."
         except:
-            return prompt
+            return f"{player.name} stands victorious, breathing heavily amid the corpses of fallen enemies. The wasteland trembles beneath their feet—a survivor's domain."
 
     def narrate_defeat(self) -> str:
-        """Generate defeat narration"""
-        prompt = "Darkness falls as you are defeated. The wasteland claims another life..."
+        """Generate verbose defeat narration"""
+        prompt = (
+            f"You are a gritty post-apocalyptic DM. Write 3-4 detailed, dramatic sentences "
+            f"describing a warrior's DEFEAT in the wasteland. Their final moments, darkness closing in, "
+            f"the wasteland claiming yet another life. Make it poignant and complete. End with a complete sentence."
+        )
         try:
-            output = self.pipe(prompt, max_new_tokens=40, do_sample=True, temperature=0.7)
+            output = self.pipe(prompt, max_new_tokens=150, do_sample=True, temperature=0.8, top_p=0.9)
             response = output[0]['generated_text']
-            cleaned = self._clean_response(response, 100)
-            return cleaned if cleaned else prompt
+            narrative = self._extract_narrative(response)
+            return narrative if len(narrative) > 50 else f"Darkness falls as your vision fades. The wasteland has claimed you, adding your bones to its endless graveyard."
         except:
-            return prompt
+            return f"Your vision blurs as consciousness slips away. The wasteland swallows you whole, and darkness becomes eternal. Another soul lost to the desert."
 
-# --- PART 2: Enhanced Combat Game with Full Systems ---
+# --- PART 2: Enhanced Combat Game ---
 class AdvancedCombatGame:
     def __init__(self):
         self.ai = GameAI()
@@ -431,7 +492,8 @@ class AdvancedCombatGame:
                     status = f"{CLR_RED}CRITICAL FAILURE!{CLR_RESET}" if result["critical"] == "failure" else f"{CLR_RED}MISS!{CLR_RESET}"
                     print(f"{status}\n")
                 
-                narrative = self.ai.narrate_attack(self.player, enemy, result['d20'], result["hit"], result["damage"], result["critical"])
+                narrative = self.ai.narrate_attack(self.player, enemy, result['d20'], result['total'], 
+                                                  result["hit"], result["damage"], result["critical"])
                 print(f"{CLR_MAGENTA}{narrative}{CLR_RESET}\n")
                 
                 if enemy.hp <= 0:
@@ -503,7 +565,8 @@ class AdvancedCombatGame:
             status = f"{CLR_GREEN}CRITICAL FAILURE!{CLR_RESET}" if result["critical"] == "failure" else f"{CLR_GREEN}MISS!{CLR_RESET}"
             print(f"{status}\n")
         
-        narrative = self.ai.narrate_attack(enemy, target, result['d20'], result["hit"], result["damage"], result["critical"])
+        narrative = self.ai.narrate_attack(enemy, target, result['d20'], result['total'], 
+                                          result["hit"], result["damage"], result["critical"])
         print(f"{CLR_MAGENTA}{narrative}{CLR_RESET}\n")
         
         if target.hp <= 0:
@@ -521,13 +584,13 @@ class AdvancedCombatGame:
         print(f"{CLR_MAGENTA}{opening}{CLR_RESET}\n")
         
         self.roll_initiative()
-        input(f"{CLR_YELLOW}Press Enter to begin combat...{CLR_RESET}\n")
         
         while self.in_combat and self.player.hp > 0 and len(self.enemies) > 0:
             self.round_count += 1
             
             round_narration = self.ai.narrate_round_start(self.round_count)
-            print(f"\n{CLR_YELLOW}[ROUND {self.round_count}] {CLR_MAGENTA}{round_narration}{CLR_RESET}\n")
+            print(f"\n{CLR_YELLOW}[ROUND {self.round_count}]{CLR_RESET}")
+            print(f"{CLR_MAGENTA}{round_narration}{CLR_RESET}\n")
             
             for combatant in self.initiative_order:
                 if not self.in_combat or self.player.hp <= 0 or len(self.enemies) == 0:
@@ -552,8 +615,7 @@ class AdvancedCombatGame:
                 print(f"DEFEAT!")
                 print(f"{'='*90}{CLR_RESET}\n")
                 self.in_combat = False
-            else:
-                input(f"{CLR_YELLOW}Press Enter for next round...{CLR_RESET}\n")
+            # NO MORE "PRESS ENTER" - Combat flows continuously
 
 if __name__ == "__main__":
     try:
