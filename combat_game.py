@@ -48,17 +48,29 @@ class CombatCharacter:
     active_armor: Optional[Item] = None
 
     def get_hp_bar(self) -> str:
-        """Generate visual HP bar"""
+        """Generate visual HP bar with color"""
         filled = max(0, self.hp * 10 // self.max_hp)
         bar = "■" * filled + "□" * (10 - filled)
-        return bar
+        
+        # Color based on HP percentage
+        if self.hp > self.max_hp * 0.5:
+            color = CLR_GREEN
+        elif self.hp > self.max_hp * 0.25:
+            color = CLR_YELLOW
+        else:
+            color = CLR_RED
+        
+        return f"{color}{bar}{CLR_RESET}"
 
     def display_status(self) -> str:
         """Display character status with color"""
         hp_bar = self.get_hp_bar()
-        color = CLR_GREEN if self.is_player else CLR_RED
-        armor_str = f" | Armor: {self.active_armor.name}" if self.active_armor else ""
-        return f"{color}{self.name:20} [{hp_bar}] {self.hp:3}/{self.max_hp:3} HP | {self.weapon}{armor_str}{CLR_RESET}"
+        name_color = CLR_GREEN if self.is_player else CLR_RED
+        armor_str = f" | {CLR_CYAN}Armor: {self.active_armor.name}{CLR_RESET}" if self.active_armor else ""
+        
+        hp_color = CLR_GREEN if self.hp > self.max_hp * 0.5 else (CLR_YELLOW if self.hp > self.max_hp * 0.25 else CLR_RED)
+        
+        return f"{name_color}{self.name:20}{CLR_RESET} [{hp_bar}] {hp_color}{self.hp:3}/{self.max_hp:3}{CLR_RESET} HP | {self.weapon}{armor_str}"
 
     def display_inventory(self) -> str:
         """Display inventory items"""
@@ -76,174 +88,145 @@ class CombatCharacter:
             items_str += f"  {i}. {rarity_color}{item.name}{CLR_RESET} ({item.item_type}) - {item.description}\n"
         return items_str
 
-# --- PART 1: Advanced DM AI with Combat Narration ---
+# --- PART 1: Advanced DM AI with Clean Combat Narration ---
 class GameAI:
     def __init__(self):
-        print(f"{CLR_YELLOW}[INIT] Loading AI DM model... (this may take a minute){CLR_RESET}", flush=True)
+        print(f"{CLR_YELLOW}[INIT] Loading AI DM model...{CLR_RESET}", flush=True)
         sys.stdout.flush()
         self.pipe = pipeline("text-generation", model="Qwen/Qwen2.5-0.5B-Instruct", device="cpu")
-        print(f"{CLR_GREEN}[INIT] AI DM loaded and ready!{CLR_RESET}", flush=True)
+        print(f"{CLR_GREEN}[INIT] AI DM loaded and ready!{CLR_RESET}\n", flush=True)
 
-    def narrate_combat_start(self, player: CombatCharacter, enemies: List[CombatCharacter]) -> str:
+    def _clean_response(self, text: str, max_length: int = 150) -> str:
+        """Clean AI response to remove prompt leakage"""
+        # Remove common prompt artifacts
+        artifacts = [
+            "Write a", "write a", "Describe", "describe", "You are", "you are",
+            "In the", "The", "A gritty", "Post-apocalyptic", "1-sentence", "2-3 sentence",
+            "1-2 sentence", "very brief", "Brief", "Brief.", "Make it", "Gritty tone"
+        ]
+        
+        for artifact in artifacts:
+            if text.startswith(artifact):
+                text = text[len(artifact):].strip()
+                break
+        
+        # Remove trailing incomplete sentences
+        if text.endswith(" that"):
+            text = text[:-5]
+        if text.endswith(" who"):
+            text = text[:-4]
+        if text.endswith(" the"):
+            text = text[:-4]
+        if text.endswith(" is"):
+            text = text[:-3]
+        if text.endswith(" and"):
+            text = text[:-4]
+        
+        # Truncate and ensure clean ending
+        if len(text) > max_length:
+            text = text[:max_length].rsplit(' ', 1)[0] + "..."
+        
+        return text.strip() if text.strip() else None
+
+    def narrate_combat_start(self, player: 'CombatCharacter', enemies: List['CombatCharacter']) -> str:
         """Generate opening narration for combat"""
         enemy_names = ", ".join([e.name for e in enemies])
-        prompt = (
-            f"You are a gritty post-apocalyptic DM. Write a 3-4 sentence vivid, intense opening to combat. "
-            f"The player faces {enemy_names} in the wasteland. Be dramatic and set a dark mood."
-        )
+        prompt = f"{player.name} faces {enemy_names} in a brutal post-apocalyptic wasteland battle!"
         
         try:
-            output = self.pipe(prompt, max_new_tokens=100, do_sample=True, temperature=0.85)
-            response = output[0]['generated_text'].strip()
-            return response[:300] if len(response) > 300 else response
+            output = self.pipe(prompt, max_new_tokens=60, do_sample=True, temperature=0.7)
+            response = output[0]['generated_text']
+            cleaned = self._clean_response(response, 120)
+            return cleaned if cleaned else prompt
         except:
-            return f"The wasteland trembles as {enemy_names} emerge from the shadows, ready for brutal combat."
-
-    def narrate_initiative_roll(self, character: CombatCharacter, roll: int) -> str:
-        """Generate narration for initiative roll"""
-        prompt = (
-            f"Write a 1-sentence dramatic description of {character.name} rolling for initiative "
-            f"with result {roll}. Gritty, post-apocalyptic tone. Very brief."
-        )
-        try:
-            output = self.pipe(prompt, max_new_tokens=30, do_sample=True, temperature=0.7)
-            response = output[0]['generated_text'].strip()
-            return response if len(response) > 5 else f"{character.name} readies for action..."
-        except:
-            return f"{character.name} prepares to act..."
+            return prompt
 
     def narrate_round_start(self, round_num: int) -> str:
         """Generate narration for round start"""
-        prompt = (
-            f"Write a 1-2 sentence dramatic description of combat round {round_num} beginning. "
-            f"Post-apocalyptic setting, tense atmosphere. Be vivid and brief."
-        )
+        prompt = f"Round {round_num} of combat erupts!"
         try:
-            output = self.pipe(prompt, max_new_tokens=40, do_sample=True, temperature=0.8)
-            response = output[0]['generated_text'].strip()
-            return response if len(response) > 5 else f"Round {round_num} erupts with violence..."
+            output = self.pipe(prompt, max_new_tokens=40, do_sample=True, temperature=0.6)
+            response = output[0]['generated_text']
+            cleaned = self._clean_response(response, 80)
+            return cleaned if cleaned else prompt
         except:
-            return f"Round {round_num} rages on!"
+            return prompt
 
-    def narrate_attack(self, attacker: CombatCharacter, defender: CombatCharacter, 
+    def narrate_attack(self, attacker: 'CombatCharacter', defender: 'CombatCharacter', 
                       attack_roll: int, hit: bool, damage: int = 0, critical: Optional[str] = None) -> str:
         """Generate vivid attack narration"""
         
         if critical == "failure":
-            prompt = (
-                f"Describe {attacker.name} CRITICALLY FAILING an attack against {defender.name}. "
-                f"Attack: {attacker.weapon}. d20 roll: {attack_roll}. "
-                f"Write 1-2 graphic, embarrassing sentences. Include the bungle."
-            )
+            prompt = f"{attacker.name} critically fails attacking {defender.name}, completely botching the strike!"
         elif critical == "success":
-            prompt = (
-                f"Describe {attacker.name} landing a DEVASTATING CRITICAL HIT on {defender.name}! "
-                f"Weapon: {attacker.weapon}. Damage: {damage}! d20 roll: {attack_roll}. "
-                f"Write 1-2 ultra-violent, graphic sentences with GORE. Make it brutal."
-            )
+            prompt = f"{attacker.name} lands a devastating CRITICAL HIT on {defender.name} with {attacker.weapon}, dealing {damage} damage!"
         elif hit:
-            prompt = (
-                f"Describe {attacker.name} hitting {defender.name} with {attacker.weapon}. "
-                f"Damage dealt: {damage}. d20 roll: {attack_roll}. "
-                f"Write 1-2 violent sentences with blood and impact."
-            )
+            prompt = f"{attacker.name} hits {defender.name} with {attacker.weapon}, dealing {damage} damage!"
         else:
-            prompt = (
-                f"Describe {attacker.name} MISSING their attack against {defender.name}. "
-                f"Weapon: {attacker.weapon}. d20 roll: {attack_roll}. "
-                f"Write 1-2 dramatic sentences about the miss."
-            )
+            prompt = f"{attacker.name} swings at {defender.name} but the attack misses completely!"
         
         try:
-            output = self.pipe(prompt, max_new_tokens=80, do_sample=True, temperature=0.85, repetition_penalty=1.2)
-            response = output[0]['generated_text'].strip()
-            
-            # Clean up
-            for phrase in ["Write 1-2", "Describe", "Attack:", "Damage:", "d20"]:
-                if phrase in response:
-                    response = response.split(phrase)[-1].strip()
-            
-            if len(response) < 10:
-                if critical == "success":
-                    response = f"{attacker.name}'s {attacker.weapon} TEARS into {defender.name}, blood and gore erupting! {damage} damage!"
-                elif critical == "failure":
-                    response = f"{attacker.name} completely botches the attack, stumbling backward!"
-                elif hit:
-                    response = f"{attacker.name} strikes {defender.name} with {attacker.weapon}! {damage} damage dealt!"
-                else:
-                    response = f"{attacker.name}'s attack sails harmlessly past {defender.name}!"
-            
-            return response[:200]
+            output = self.pipe(prompt, max_new_tokens=50, do_sample=True, temperature=0.7)
+            response = output[0]['generated_text']
+            cleaned = self._clean_response(response, 100)
+            return cleaned if cleaned else prompt
         except:
-            if hit:
-                return f"{attacker.name}'s {attacker.weapon} strikes {defender.name}! {damage} damage!"
-            else:
-                return f"{attacker.name} misses {defender.name}!"
+            return prompt
 
-    def narrate_death(self, defeated: CombatCharacter, killer: CombatCharacter) -> str:
+    def narrate_death(self, defeated: 'CombatCharacter', killer: 'CombatCharacter') -> str:
         """Generate death narration"""
-        prompt = (
-            f"Describe the GRITTY, GRAPHIC death of {defeated.name}, defeated by {killer.name}. "
-            f"Post-apocalyptic wasteland. Write 2 sentences with gore and finality. Make it brutal."
-        )
-        try:
-            output = self.pipe(prompt, max_new_tokens=60, do_sample=True, temperature=0.85)
-            response = output[0]['generated_text'].strip()
-            return response[:200] if len(response) > 10 else f"{defeated.name} falls, lifeless."
-        except:
-            return f"{defeated.name} collapses into the dust, their final breath stolen by the wasteland."
-
-    def narrate_defend(self, character: CombatCharacter) -> str:
-        """Generate defend action narration"""
-        prompt = (
-            f"Describe {character.name} raising their defenses and bracing for impact. "
-            f"Write 1-2 sentences. Post-apocalyptic tone."
-        )
+        prompt = f"{defeated.name} falls, defeated by {killer.name}! The wasteland claims another victim."
         try:
             output = self.pipe(prompt, max_new_tokens=40, do_sample=True, temperature=0.7)
-            response = output[0]['generated_text'].strip()
-            return response if len(response) > 5 else f"{character.name} braces for incoming attacks!"
+            response = output[0]['generated_text']
+            cleaned = self._clean_response(response, 100)
+            return cleaned if cleaned else prompt
         except:
-            return f"{character.name} raises their defenses!"
+            return prompt
 
-    def narrate_inventory_use(self, character: CombatCharacter, item: Item) -> str:
+    def narrate_defend(self, character: 'CombatCharacter') -> str:
+        """Generate defend action narration"""
+        prompt = f"{character.name} raises defenses and braces for impact!"
+        try:
+            output = self.pipe(prompt, max_new_tokens=30, do_sample=True, temperature=0.6)
+            response = output[0]['generated_text']
+            cleaned = self._clean_response(response, 80)
+            return cleaned if cleaned else prompt
+        except:
+            return prompt
+
+    def narrate_inventory_use(self, character: 'CombatCharacter', item: Item) -> str:
         """Generate narration for using an item"""
-        prompt = (
-            f"{character.name} uses {item.name} ({item.item_type}). Effect: {item.description}. "
-            f"Write 1-2 dramatic sentences. Post-apocalyptic tone."
-        )
+        prompt = f"{character.name} uses {item.name}! {item.description}"
         try:
-            output = self.pipe(prompt, max_new_tokens=40, do_sample=True, temperature=0.75)
-            response = output[0]['generated_text'].strip()
-            return response if len(response) > 5 else f"{character.name} uses {item.name}!"
+            output = self.pipe(prompt, max_new_tokens=30, do_sample=True, temperature=0.6)
+            response = output[0]['generated_text']
+            cleaned = self._clean_response(response, 80)
+            return cleaned if cleaned else prompt
         except:
-            return f"{character.name} uses {item.name}! {item.description}"
+            return prompt
 
-    def narrate_victory(self, player: CombatCharacter) -> str:
+    def narrate_victory(self, player: 'CombatCharacter') -> str:
         """Generate victory narration"""
-        prompt = (
-            f"{player.name} has defeated all enemies and stands victorious in the wasteland. "
-            f"Write 2-3 dramatic sentences about their triumph. Gritty tone. They're bloodied but alive."
-        )
+        prompt = f"Victory! {player.name} stands victorious amidst the ruins of their enemies!"
         try:
-            output = self.pipe(prompt, max_new_tokens=60, do_sample=True, temperature=0.8)
-            response = output[0]['generated_text'].strip()
-            return response if len(response) > 10 else "You stand victorious amidst the carnage."
+            output = self.pipe(prompt, max_new_tokens=40, do_sample=True, temperature=0.7)
+            response = output[0]['generated_text']
+            cleaned = self._clean_response(response, 100)
+            return cleaned if cleaned else prompt
         except:
-            return "You stand victorious, the wasteland now yours to command."
+            return prompt
 
     def narrate_defeat(self) -> str:
         """Generate defeat narration"""
-        prompt = (
-            f"The player has been defeated in combat in the post-apocalyptic wasteland. "
-            f"Write 2-3 dramatic, gritty sentences about their death and the darkness claiming them."
-        )
+        prompt = "Darkness falls as you are defeated. The wasteland claims another life..."
         try:
-            output = self.pipe(prompt, max_new_tokens=60, do_sample=True, temperature=0.8)
-            response = output[0]['generated_text'].strip()
-            return response if len(response) > 10 else "Darkness claims you as the wasteland takes another life."
+            output = self.pipe(prompt, max_new_tokens=40, do_sample=True, temperature=0.7)
+            response = output[0]['generated_text']
+            cleaned = self._clean_response(response, 100)
+            return cleaned if cleaned else prompt
         except:
-            return "Your vision fades... the wasteland claims another victim."
+            return prompt
 
 # --- PART 2: Enhanced Combat Game with Full Systems ---
 class AdvancedCombatGame:
@@ -267,7 +250,7 @@ class AdvancedCombatGame:
             ]
         )
         
-        # Initialize enemies with inventory
+        # Initialize enemies
         self.enemies: List[CombatCharacter] = [
             CombatCharacter(
                 name="Super Mutant",
@@ -297,7 +280,7 @@ class AdvancedCombatGame:
         self.in_combat = True
         
     def roll_initiative(self):
-        """Roll and narrate initiative for all combatants"""
+        """Roll and display initiative for all combatants"""
         print(f"\n{CLR_YELLOW}{'='*90}")
         print(f"INITIATIVE PHASE - ROLLING FOR COMBAT ORDER")
         print(f"{'='*90}{CLR_RESET}\n")
@@ -307,30 +290,35 @@ class AdvancedCombatGame:
             modifier = combatant.atk // 2
             combatant.initiative_roll = d20_roll + modifier
             
-            # AI narration
-            narration = self.ai.narrate_initiative_roll(combatant, combatant.initiative_roll)
-            
             role = f"{CLR_GREEN}[PLAYER]{CLR_RESET}" if combatant.is_player else f"{CLR_RED}[ENEMY]{CLR_RESET}"
-            print(f"{role} {combatant.name:20} | d20: {d20_roll:2} + {modifier} = {combatant.initiative_roll:3}")
-            print(f"{CLR_MAGENTA}  └─ {narration}{CLR_RESET}\n")
+            print(f"{role} {combatant.name:20} rolled d20: {d20_roll:2} + {modifier} = {combatant.initiative_roll:3}")
         
         # Sort by initiative
         self.initiative_order = sorted(self.all_combatants, key=lambda x: x.initiative_roll, reverse=True)
         
-        print(f"{CLR_CYAN}TURN ORDER:{CLR_RESET}")
+        print(f"\n{CLR_CYAN}{'='*90}")
+        print(f"COMBAT ORDER:")
+        print(f"{'='*90}{CLR_RESET}")
         for i, c in enumerate(self.initiative_order, 1):
             role = "PLAYER" if c.is_player else "ENEMY"
-            print(f"  {i}. {CLR_WHITE}{c.name:20}{CLR_RESET} (Initiative: {c.initiative_roll}) [{role}]")
+            print(f"  {i}. {CLR_WHITE}{c.name:20}{CLR_RESET} (Init: {c.initiative_roll}) - {role}")
         print()
 
     def display_combat_status(self):
-        """Display all combatants' status"""
+        """Display all combatants' status with colors"""
         print(f"\n{CLR_BLUE}{'='*90}")
         print(f"ROUND {self.round_count} - BATTLEFIELD STATUS")
         print(f"{'='*90}{CLR_RESET}\n")
         
-        for c in self.initiative_order:
-            print(c.display_status())
+        # Player
+        print(f"{CLR_GREEN}[PLAYER]{CLR_RESET}")
+        print(self.player.display_status())
+        
+        # Enemies
+        print(f"\n{CLR_RED}[ENEMIES]{CLR_RESET}")
+        for enemy in self.enemies:
+            if enemy.hp > 0:
+                print(enemy.display_status())
         print()
 
     def parse_player_action(self, command: str):
@@ -405,7 +393,7 @@ class AdvancedCombatGame:
             if action == "help":
                 print(f"{CLR_CYAN}\n[COMMAND HELP]")
                 print(f"  attack <enemy>  - Attack by name (Super Mutant, Feral Ghoul)")
-                print(f"  defend          - Raise defenses, reduce damage")
+                print(f"  defend          - Raise defenses, reduce damage this round")
                 print(f"  use <item>      - Use consumable from inventory")
                 print(f"  inventory       - View your items")
                 print(f"  flee            - Attempt to escape (DC 12)")
@@ -431,19 +419,20 @@ class AdvancedCombatGame:
                     continue
                 
                 result = self.roll_attack(self.player, enemy)
+                
                 print(f"\n{CLR_BLUE}[ATTACK ROLL]{CLR_RESET}")
                 print(f"{CLR_CYAN}d20: {result['d20']} + {self.player.atk} = {result['total']}{CLR_RESET}")
                 
                 if result["hit"]:
                     enemy.hp = max(enemy.hp - result["damage"], 0)
-                    status = "CRITICAL!" if result["critical"] == "success" else "HIT!"
-                    print(f"{CLR_GREEN}{status} {result['damage']} damage!{CLR_RESET}\n")
+                    status = f"{CLR_GREEN}CRITICAL HIT!{CLR_RESET}" if result["critical"] == "success" else f"{CLR_GREEN}HIT!{CLR_RESET}"
+                    print(f"{status} {result['damage']} damage!\n")
                 else:
-                    status = "CRITICAL FAILURE!" if result["critical"] == "failure" else "MISS!"
-                    print(f"{CLR_RED}{status}{CLR_RESET}\n")
+                    status = f"{CLR_RED}CRITICAL FAILURE!{CLR_RESET}" if result["critical"] == "failure" else f"{CLR_RED}MISS!{CLR_RESET}"
+                    print(f"{status}\n")
                 
                 narrative = self.ai.narrate_attack(self.player, enemy, result['d20'], result["hit"], result["damage"], result["critical"])
-                print(f"{CLR_MAGENTA}[NARRATION] {narrative}{CLR_RESET}\n")
+                print(f"{CLR_MAGENTA}{narrative}{CLR_RESET}\n")
                 
                 if enemy.hp <= 0:
                     death_narration = self.ai.narrate_death(enemy, self.player)
@@ -457,7 +446,7 @@ class AdvancedCombatGame:
             elif action == "defend":
                 print(f"\n{CLR_BLUE}[DEFENSIVE STANCE]{CLR_RESET}\n")
                 narration = self.ai.narrate_defend(self.player)
-                print(f"{CLR_MAGENTA}[NARRATION] {narration}{CLR_RESET}\n")
+                print(f"{CLR_MAGENTA}{narration}{CLR_RESET}\n")
                 return "defend"
             
             elif action == "use":
@@ -471,7 +460,7 @@ class AdvancedCombatGame:
                     continue
                 
                 narration = self.ai.narrate_inventory_use(self.player, item)
-                print(f"{CLR_MAGENTA}[NARRATION] {narration}{CLR_RESET}\n")
+                print(f"{CLR_MAGENTA}{narration}{CLR_RESET}\n")
                 
                 if item.item_type == "consumable":
                     if "health" in item.name.lower():
@@ -496,7 +485,7 @@ class AdvancedCombatGame:
                     continue
 
     def execute_enemy_turn(self, enemy: CombatCharacter):
-        """Execute enemy's turn with full narration"""
+        """Execute enemy's turn with narration"""
         if enemy.hp <= 0 or not self.enemies:
             return
         
@@ -508,17 +497,17 @@ class AdvancedCombatGame:
         
         if result["hit"]:
             target.hp = max(target.hp - result["damage"], 0)
-            status = "CRITICAL!" if result["critical"] == "success" else "HIT!"
-            print(f"{CLR_RED}{status} You take {result['damage']} damage!{CLR_RESET}\n")
+            status = f"{CLR_RED}CRITICAL HIT!{CLR_RESET}" if result["critical"] == "success" else f"{CLR_RED}HIT!{CLR_RESET}"
+            print(f"{status} You take {result['damage']} damage!\n")
         else:
-            status = "CRITICAL FAILURE!" if result["critical"] == "failure" else "MISS!"
-            print(f"{CLR_GREEN}{status}{CLR_RESET}\n")
+            status = f"{CLR_GREEN}CRITICAL FAILURE!{CLR_RESET}" if result["critical"] == "failure" else f"{CLR_GREEN}MISS!{CLR_RESET}"
+            print(f"{status}\n")
         
         narrative = self.ai.narrate_attack(enemy, target, result['d20'], result["hit"], result["damage"], result["critical"])
-        print(f"{CLR_MAGENTA}[NARRATION] {narrative}{CLR_RESET}\n")
+        print(f"{CLR_MAGENTA}{narrative}{CLR_RESET}\n")
         
         if target.hp <= 0:
-            death_narration = self.ai.narrate_death(target, enemy)
+            death_narration = self.ai.narrate_defeat()
             print(f"{CLR_RED}[YOUR DEATH] {death_narration}{CLR_RESET}\n")
             self.in_combat = False
 
@@ -529,17 +518,16 @@ class AdvancedCombatGame:
         print(f"{'='*90}{CLR_RESET}\n")
         
         opening = self.ai.narrate_combat_start(self.player, self.enemies)
-        print(f"{CLR_MAGENTA}[SCENE] {opening}{CLR_RESET}\n")
+        print(f"{CLR_MAGENTA}{opening}{CLR_RESET}\n")
         
         self.roll_initiative()
-        input(f"{CLR_YELLOW}Press Enter to begin...{CLR_RESET}\n")
+        input(f"{CLR_YELLOW}Press Enter to begin combat...{CLR_RESET}\n")
         
         while self.in_combat and self.player.hp > 0 and len(self.enemies) > 0:
             self.round_count += 1
             
             round_narration = self.ai.narrate_round_start(self.round_count)
-            print(f"{CLR_YELLOW}[ROUND {self.round_count}]{CLR_RESET}")
-            print(f"{CLR_MAGENTA}{round_narration}{CLR_RESET}\n")
+            print(f"\n{CLR_YELLOW}[ROUND {self.round_count}] {CLR_MAGENTA}{round_narration}{CLR_RESET}\n")
             
             for combatant in self.initiative_order:
                 if not self.in_combat or self.player.hp <= 0 or len(self.enemies) == 0:
@@ -563,8 +551,6 @@ class AdvancedCombatGame:
                 print(f"\n{CLR_RED}{'='*90}")
                 print(f"DEFEAT!")
                 print(f"{'='*90}{CLR_RESET}\n")
-                defeat_text = self.ai.narrate_defeat()
-                print(f"{CLR_RED}{defeat_text}{CLR_RESET}\n")
                 self.in_combat = False
             else:
                 input(f"{CLR_YELLOW}Press Enter for next round...{CLR_RESET}\n")
