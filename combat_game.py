@@ -132,7 +132,7 @@ class GameAI:
     def narrate_story(self, player_location: str, last_action: str = "", turn_num: int = 1) -> str:
         """Generate story narration for exploration/downtime"""
         prompt = (
-            f"You are a gritty post-apocalyptic DM narrating a wasteland adventure. "
+            f"You are a gritty post-apocalyptic DM with Walter Moers-like surreal wit. "
             f"The player is at: {player_location}. Turn {turn_num}/100. "
             f"Write 3-4 vivid sentences describing the wasteland environment, atmosphere, or NPCs. "
             f"Be descriptive but leave room for player interaction. What do they see, hear, smell?"
@@ -151,14 +151,11 @@ class GameAI:
             clean_sentences = [s.strip() + '.' for s in sentences if len(s.strip()) > 10]
             return ' '.join(clean_sentences[:4])
         except:
-            locations = {
-                "Wasteland Settlement": "The settlement around you is a collection of ramshackle buildings and makeshift shelters. The wind carries the scent of dust and decay. You can see merchants haggling in the distance.",
-                "Desert Ruins": "Crumbling ruins of the old world stretch across the horizon. Metal frameworks jut from the sand like skeletal remains. The sun beats down mercilessly on this desolate place.",
-                "Underground Bunker": "The concrete walls of the bunker are cold and damp. Emergency lighting flickers overhead, casting eerie shadows. The air is stale but breathable.",
-                "Trading Post": "A bustling hub of activity where survivors gather to trade. Guards watch from elevated platforms. The smell of food and fuel fills the air.",
-                "Abandoned Lab": "High-tech equipment lies dormant in the darkness, half-buried by sand and time. Computer terminals hang silent on the walls. Something feels wrong here."
-            }
-            return locations.get(player_location, "The wasteland stretches endlessly before you, empty and unforgiving. The wind whispers of ancient secrets lost to time.")
+            return (
+                f"{player_location} groans under rust, static, and old-world ghosts. "
+                f"Odd silhouettes move beyond cracked machinery while wind drags grit across your boots. "
+                f"Somewhere nearby, survival and danger are bargaining in the same voice."
+            )
 
     def narrate_encounter_start(self, enemy_names: str) -> str:
         """Narrate the start of an encounter"""
@@ -249,7 +246,7 @@ class WastelandAdventure:
             defense=2,
             weapon="Plasma Rifle",
             weapon_bonus=3,
-            location="Wasteland Settlement",
+            location="Unknown Wastes",
             is_player=True,
             inventory=[
                 Item("Plasma Rifle", "weapon", damage_bonus=3, to_hit_bonus=0, 
@@ -276,15 +273,203 @@ class WastelandAdventure:
         self.current_enemies: List[CombatCharacter] = []
         self.round_count = 0
         self.game_over = False
-        
-        # Available locations
-        self.locations = [
-            "Wasteland Settlement",
-            "Desert Ruins",
-            "Underground Bunker",
-            "Trading Post",
-            "Abandoned Lab"
+
+        # Procedurally generated world data
+        self.item_catalog: Dict[str, Item] = {}
+        self.npc_catalog: Dict[str, Dict] = {}
+        self.monster_catalog: Dict[str, Dict] = {}
+        self.location_data: Dict[str, Dict] = {}
+        self.locations: List[str] = []
+        self.rng = random.Random()
+        self.generate_world()
+        self.player.location = self.locations[0]
+
+    def clone_item(self, item: Item) -> Item:
+        return Item(
+            name=item.name,
+            item_type=item.item_type,
+            damage_bonus=item.damage_bonus,
+            armor_bonus=item.armor_bonus,
+            to_hit_bonus=item.to_hit_bonus,
+            description=item.description,
+            rarity=item.rarity
+        )
+
+    def generate_world(self):
+        """Generate 150 items, 50 NPCs, 70 monsters, and 80 locations."""
+        rng = self.rng
+
+        adjectives = [
+            "Rustbound", "Howling", "Glass", "Feral", "Soot", "Neon", "Bone", "Ashen", "Cracked", "Vermilion",
+            "Radio", "Phantom", "Gutter", "Shiver", "Mire", "Copper", "Volt", "Cinder", "Splinter", "Hollow"
         ]
+        nouns = [
+            "Spire", "Market", "Vault", "Canyon", "Refinery", "Causeway", "Temple", "Bastion", "Circus", "Lab",
+            "Station", "Pit", "Outpost", "Arena", "Scrapyard", "Catacomb", "Dunes", "Bridge", "Rookery", "Garden"
+        ]
+        suffixes = [
+            "of Echoes", "of Static", "of Dust", "of Needles", "of Fumes", "of Bones", "of Crows", "of Cogs",
+            "of Salt", "of Murmurs", "of Lanterns", "of Craters"
+        ]
+
+        weapon_bases = ["Rifle", "Blade", "Hammer", "Pistol", "Lance", "Cannon", "Repeater", "Injector", "Halberd", "Saw"]
+        armor_bases = ["Vest", "Plate", "Shielding", "Mesh", "Coat", "Harness", "Carapace", "Mantle"]
+        consumables = ["Health Pack", "Adrenal Shot", "Rad Cleanser", "Focus Serum", "Stim Patch", "Field Tonic"]
+        trinkets = ["Map Fragment", "Signal Charm", "Gear Totem", "Luck Coin", "Vault Key", "Relic Core"]
+
+        # Items (150)
+        for i in range(150):
+            rarity_roll = rng.random()
+            if rarity_roll < 0.55:
+                rarity = ItemRarity.COMMON
+            elif rarity_roll < 0.8:
+                rarity = ItemRarity.UNCOMMON
+            elif rarity_roll < 0.96:
+                rarity = ItemRarity.RARE
+            else:
+                rarity = ItemRarity.LEGENDARY
+
+            item_type = rng.choice(["weapon", "armor", "consumable", "trinket"])
+            name_prefix = rng.choice(adjectives)
+            if item_type == "weapon":
+                base = rng.choice(weapon_bases)
+                name = f"{name_prefix} {base} Mk-{i + 1}"
+                item = Item(
+                    name=name,
+                    item_type="weapon",
+                    damage_bonus=rng.randint(1, 6),
+                    to_hit_bonus=rng.randint(0, 3),
+                    description=f"A {base.lower()} tuned for wasteland combat.",
+                    rarity=rarity
+                )
+            elif item_type == "armor":
+                base = rng.choice(armor_bases)
+                name = f"{name_prefix} {base} Mk-{i + 1}"
+                item = Item(
+                    name=name,
+                    item_type="armor",
+                    armor_bonus=rng.randint(1, 5),
+                    description=f"Protective {base.lower()} scavenged from pre-fall stock.",
+                    rarity=rarity
+                )
+            elif item_type == "consumable":
+                base = rng.choice(consumables)
+                name = f"{name_prefix} {base} #{i + 1}"
+                item = Item(
+                    name=name,
+                    item_type="consumable",
+                    damage_bonus=rng.randint(12, 35),
+                    description="Single-use survival chemical.",
+                    rarity=rarity
+                )
+            else:
+                base = rng.choice(trinkets)
+                name = f"{name_prefix} {base} #{i + 1}"
+                item = Item(
+                    name=name,
+                    item_type="trinket",
+                    description="A strange keepsake from the dead world.",
+                    rarity=rarity
+                )
+            self.item_catalog[item.name] = item
+
+        item_names = list(self.item_catalog.keys())
+
+        # NPCs (50)
+        npc_roles = [
+            "Scavenger", "Mechanic", "Medic", "Cartographer", "Trader", "Courier",
+            "Beast Tamer", "Scribe", "Bounty Broker", "Guide"
+        ]
+        for i in range(50):
+            name = f"{rng.choice(adjectives)} {rng.choice(['Mara', 'Jax', 'Tovin', 'Nara', 'Brigg', 'Sera', 'Krell', 'Voss', 'Dima', 'Rook'])}-{i + 1}"
+            role = rng.choice(npc_roles)
+            gear = rng.sample(item_names, 2)
+            self.npc_catalog[name] = {
+                "role": role,
+                "equipment": gear,
+                "attitude": rng.choice(["friendly", "neutral", "suspicious"]),
+                "bio": f"A {role.lower()} who survived by grit, rumor, and timing."
+            }
+
+        # Monsters (70)
+        species = ["Ghoul", "Mutant", "Ravager", "Crawler", "Wyrm", "Mantis", "Automaton", "Reaper", "Hound", "Stalker"]
+        attack_types = ["Claws", "Toxic Bite", "Rebar Spear", "Plasma Spit", "Chain Whip", "Serrated Maw", "Shock Talons"]
+        for i in range(70):
+            name = f"{rng.choice(adjectives)} {rng.choice(species)}-{i + 1}"
+            weapon = rng.choice(attack_types)
+            loot = rng.sample(item_names, rng.randint(1, 3))
+            self.monster_catalog[name] = {
+                "hp": rng.randint(28, 92),
+                "atk": rng.randint(4, 11),
+                "defense": rng.randint(0, 4),
+                "weapon": weapon,
+                "weapon_bonus": rng.randint(1, 4),
+                "loot": loot
+            }
+
+        npc_names = list(self.npc_catalog.keys())
+        monster_names = list(self.monster_catalog.keys())
+
+        # Locations (80)
+        while len(self.location_data) < 80:
+            loc_name = f"{rng.choice(adjectives)} {rng.choice(nouns)} {rng.choice(suffixes)}"
+            if loc_name in self.location_data:
+                continue
+            loc_loot = rng.sample(item_names, rng.randint(2, 5))
+            loc_npcs = rng.sample(npc_names, rng.randint(1, 2))
+            loc_monsters = rng.sample(monster_names, rng.randint(1, 3))
+            self.location_data[loc_name] = {
+                "description": (
+                    f"This sector is known for collapsed steel, distorted echoes, and survivor myths. "
+                    f"Every corner of {loc_name} promises salvage and danger."
+                ),
+                "loot": loc_loot,
+                "npcs": loc_npcs,
+                "monsters": loc_monsters
+            }
+
+        self.locations = list(self.location_data.keys())
+        print(
+            f"{CLR_CYAN}[WORLD GEN]{CLR_RESET} "
+            f"{len(self.item_catalog)} items, {len(self.npc_catalog)} NPCs, "
+            f"{len(self.monster_catalog)} monsters, {len(self.location_data)} locations generated."
+        )
+
+    def find_location(self, target: str) -> Optional[str]:
+        if not target:
+            return None
+        target_low = target.lower()
+        for location in self.locations:
+            if location.lower() == target_low:
+                return location
+        for location in self.locations:
+            if target_low in location.lower():
+                return location
+        return None
+
+    def create_monster_combatant(self, monster_name: str) -> Optional[CombatCharacter]:
+        data = self.monster_catalog.get(monster_name)
+        if not data:
+            return None
+
+        monster = CombatCharacter(
+            name=monster_name,
+            hp=data["hp"],
+            max_hp=data["hp"],
+            atk=data["atk"],
+            defense=data["defense"],
+            weapon=data["weapon"],
+            weapon_bonus=data["weapon_bonus"],
+            location=self.player.location
+        )
+
+        monster.inventory = [self.clone_item(self.item_catalog[item_name]) for item_name in data.get("loot", []) if item_name in self.item_catalog]
+        for item in monster.inventory:
+            if item.item_type == "weapon" and not monster.active_weapon:
+                monster.active_weapon = item
+            elif item.item_type == "armor" and not monster.active_armor:
+                monster.active_armor = item
+        return monster
 
     def roll_initiative(self):
         """Roll initiative for all combatants"""
@@ -434,6 +619,10 @@ class WastelandAdventure:
                 if enemy.hp <= 0:
                     death_text = self.ai.narrate_death(enemy.name, self.player.name)
                     print(f"{CLR_RED}[DEATH]{CLR_RESET} {death_text}\n")
+                    if enemy.inventory:
+                        dropped = self.rng.choice(enemy.inventory)
+                        self.player.inventory.append(self.clone_item(dropped))
+                        print(f"{CLR_CYAN}Loot acquired: {dropped.name}{CLR_RESET}\n")
                     self.current_enemies.remove(enemy)
                     if enemy in self.initiative_order:
                         self.initiative_order.remove(enemy)
@@ -493,28 +682,26 @@ class WastelandAdventure:
             self.in_combat = False
 
     def start_combat_encounter(self, num_enemies: int = 2):
-        """Start a random combat encounter"""
+        """Start an encounter from current location's monster population."""
         self.in_combat = True
         self.round_count = 0
         self.current_enemies = []
-        
-        enemy_templates = [
-            CombatCharacter(
-                name="Super Mutant", hp=60, max_hp=60, atk=7, defense=1,
-                weapon="Super Sledge", weapon_bonus=3, location="Combat Zone"
-            ),
-            CombatCharacter(
-                name="Feral Ghoul", hp=30, max_hp=30, atk=5, defense=0,
-                weapon="Claws", weapon_bonus=1, location="Combat Zone"
-            ),
-            CombatCharacter(
-                name="Raider", hp=40, max_hp=40, atk=6, defense=1,
-                weapon="Hunting Rifle", weapon_bonus=2, location="Combat Zone"
-            )
-        ]
-        
-        selected = random.sample(enemy_templates, min(num_enemies, len(enemy_templates)))
-        self.current_enemies = selected
+
+        location_info = self.location_data.get(self.player.location, {})
+        local_monsters = location_info.get("monsters", [])
+        if not local_monsters:
+            local_monsters = self.rng.sample(list(self.monster_catalog.keys()), min(3, len(self.monster_catalog)))
+
+        selected_names = self.rng.sample(local_monsters, min(num_enemies, len(local_monsters)))
+        for monster_name in selected_names:
+            combatant = self.create_monster_combatant(monster_name)
+            if combatant:
+                self.current_enemies.append(combatant)
+
+        if not self.current_enemies:
+            self.in_combat = False
+            print(f"{CLR_GREEN}No hostile creatures are present right now.{CLR_RESET}")
+            return
         
         enemy_names = ", ".join([e.name for e in self.current_enemies])
         encounter_text = self.ai.narrate_encounter_start(enemy_names)
@@ -560,6 +747,13 @@ class WastelandAdventure:
         print(f"TURN {self.turn_count}/{self.max_turns}")
         print(f"{'='*90}{CLR_RESET}")
         print(f"\n{CLR_GREEN}[LOCATION]{CLR_RESET} {self.player.location}")
+        location_info = self.location_data.get(self.player.location, {})
+        if location_info:
+            print(f"{CLR_CYAN}{location_info['description']}{CLR_RESET}")
+            if location_info.get("npcs"):
+                print(f"{CLR_GREEN}NPCs nearby:{CLR_RESET} {', '.join(location_info['npcs'])}")
+            if location_info.get("monsters"):
+                print(f"{CLR_RED}Hostiles reported:{CLR_RESET} {', '.join(location_info['monsters'])}")
         print(f"{self.player.display_status()}\n")
         
         # Generate environment narration
@@ -567,20 +761,29 @@ class WastelandAdventure:
         print(f"{CLR_MAGENTA}{env_narration}{CLR_RESET}\n")
         
         # Get player action
-        print(f"{CLR_YELLOW}Actions: move <location>, search, rest, examine, travel, inventory, status, help{CLR_RESET}")
+        print(f"{CLR_YELLOW}Actions: move <location>, locations, search, rest, examine, travel, inventory, status, help{CLR_RESET}")
         command = input(f"{CLR_GREEN}> {CLR_RESET}").strip()
         
         action, target = self.parse_action(command)
         
         if action == "help":
             print(f"\n{CLR_CYAN}[EXPLORATION COMMANDS]")
-            print(f"  move <location>  - Travel to: {', '.join(self.locations)}")
+            print(f"  move <location>  - Travel to another generated location")
+            print(f"  locations        - View all discoverable locations")
             print(f"  search           - Search current location for items/info")
             print(f"  rest             - Rest and recover HP")
             print(f"  examine          - Examine surroundings")
             print(f"  inventory        - View items")
             print(f"  status           - Full character sheet")
             print(f"  travel           - Chance to encounter enemies{CLR_RESET}\n")
+            return True
+
+        if action == "locations":
+            print(f"\n{CLR_CYAN}[KNOWN LOCATIONS - {len(self.locations)}]{CLR_RESET}")
+            for i, loc in enumerate(self.locations, 1):
+                marker = f"{CLR_GREEN} (current){CLR_RESET}" if loc == self.player.location else ""
+                print(f"  {i:2}. {loc}{marker}")
+            print()
             return True
         
         if action == "inventory":
@@ -592,11 +795,12 @@ class WastelandAdventure:
             return True
         
         if action == "move":
-            if not target or target not in self.locations:
-                print(f"{CLR_RED}Move to where? {self.locations}{CLR_RESET}\n")
+            destination = self.find_location(target) if target else None
+            if not destination:
+                print(f"{CLR_RED}Move to where? Use 'locations' and type a full or partial location name.{CLR_RESET}\n")
                 return True
-            self.player.location = target
-            print(f"{CLR_GREEN}You travel to {target}.{CLR_RESET}\n")
+            self.player.location = destination
+            print(f"{CLR_GREEN}You travel to {destination}.{CLR_RESET}\n")
             return True
         
         if action == "rest":
@@ -610,6 +814,14 @@ class WastelandAdventure:
         if action == "search":
             search_text = self.ai.narrate_exploration_action("search", self.player.location)
             print(f"{CLR_MAGENTA}{search_text}{CLR_RESET}\n")
+            if location_info and location_info.get("loot"):
+                item_name = self.rng.choice(location_info["loot"])
+                if item_name in self.item_catalog:
+                    looted = self.clone_item(self.item_catalog[item_name])
+                    self.player.inventory.append(looted)
+                    print(f"{CLR_CYAN}You found: {looted.name}{CLR_RESET}\n")
+            else:
+                print(f"{CLR_YELLOW}No useful loot found here right now.{CLR_RESET}\n")
             return True
         
         if action == "examine":
@@ -619,10 +831,16 @@ class WastelandAdventure:
         
         if action == "travel":
             print(f"\n{CLR_YELLOW}You venture deeper into the wasteland...{CLR_RESET}\n")
-            encounter_roll = random.randint(1, 20)
-            if encounter_roll > 12:
-                num_enemies = 1 if encounter_roll > 16 else 2
-                self.start_combat_encounter(num_enemies)
+            available_hostiles = location_info.get("monsters", [])
+            encounter_roll = self.rng.randint(1, 20)
+            if available_hostiles:
+                if encounter_roll > 8:
+                    num_enemies = min(len(available_hostiles), 1 if encounter_roll > 15 else 2)
+                    self.start_combat_encounter(num_enemies)
+                else:
+                    print(f"{CLR_GREEN}You travel safely, encountering nothing.{CLR_RESET}\n")
+            elif encounter_roll > 16:
+                self.start_combat_encounter(1)
             else:
                 print(f"{CLR_GREEN}You travel safely, encountering nothing.{CLR_RESET}\n")
             return True
