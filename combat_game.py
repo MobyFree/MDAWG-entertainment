@@ -280,6 +280,7 @@ class WastelandAdventure:
         self.monster_catalog: Dict[str, Dict] = {}
         self.location_data: Dict[str, Dict] = {}
         self.locations: List[str] = []
+        self.rng = random.Random()
         self.generate_world()
         self.player.location = self.locations[0]
 
@@ -296,7 +297,7 @@ class WastelandAdventure:
 
     def generate_world(self):
         """Generate 150 items, 50 NPCs, 70 monsters, and 80 locations."""
-        rng = random.Random()
+        rng = self.rng
 
         adjectives = [
             "Rustbound", "Howling", "Glass", "Feral", "Soot", "Neon", "Bone", "Ashen", "Cracked", "Vermilion",
@@ -410,8 +411,10 @@ class WastelandAdventure:
         monster_names = list(self.monster_catalog.keys())
 
         # Locations (80)
-        for i in range(80):
-            loc_name = f"{rng.choice(adjectives)} {rng.choice(nouns)} {rng.choice(suffixes)} #{i + 1}"
+        while len(self.location_data) < 80:
+            loc_name = f"{rng.choice(adjectives)} {rng.choice(nouns)} {rng.choice(suffixes)}"
+            if loc_name in self.location_data:
+                continue
             loc_loot = rng.sample(item_names, rng.randint(2, 5))
             loc_npcs = rng.sample(npc_names, rng.randint(1, 2))
             loc_monsters = rng.sample(monster_names, rng.randint(1, 3))
@@ -617,7 +620,7 @@ class WastelandAdventure:
                     death_text = self.ai.narrate_death(enemy.name, self.player.name)
                     print(f"{CLR_RED}[DEATH]{CLR_RESET} {death_text}\n")
                     if enemy.inventory:
-                        dropped = random.choice(enemy.inventory)
+                        dropped = self.rng.choice(enemy.inventory)
                         self.player.inventory.append(self.clone_item(dropped))
                         print(f"{CLR_CYAN}Loot acquired: {dropped.name}{CLR_RESET}\n")
                     self.current_enemies.remove(enemy)
@@ -687,9 +690,9 @@ class WastelandAdventure:
         location_info = self.location_data.get(self.player.location, {})
         local_monsters = location_info.get("monsters", [])
         if not local_monsters:
-            local_monsters = random.sample(list(self.monster_catalog.keys()), min(3, len(self.monster_catalog)))
+            local_monsters = self.rng.sample(list(self.monster_catalog.keys()), min(3, len(self.monster_catalog)))
 
-        selected_names = random.sample(local_monsters, min(num_enemies, len(local_monsters)))
+        selected_names = self.rng.sample(local_monsters, min(num_enemies, len(local_monsters)))
         for monster_name in selected_names:
             combatant = self.create_monster_combatant(monster_name)
             if combatant:
@@ -794,7 +797,7 @@ class WastelandAdventure:
         if action == "move":
             destination = self.find_location(target) if target else None
             if not destination:
-                print(f"{CLR_RED}Move to where? Use 'locations' to view valid destinations.{CLR_RESET}\n")
+                print(f"{CLR_RED}Move to where? Use 'locations' and type a full or partial location name.{CLR_RESET}\n")
                 return True
             self.player.location = destination
             print(f"{CLR_GREEN}You travel to {destination}.{CLR_RESET}\n")
@@ -812,7 +815,7 @@ class WastelandAdventure:
             search_text = self.ai.narrate_exploration_action("search", self.player.location)
             print(f"{CLR_MAGENTA}{search_text}{CLR_RESET}\n")
             if location_info and location_info.get("loot"):
-                item_name = random.choice(location_info["loot"])
+                item_name = self.rng.choice(location_info["loot"])
                 if item_name in self.item_catalog:
                     looted = self.clone_item(self.item_catalog[item_name])
                     self.player.inventory.append(looted)
@@ -829,10 +832,13 @@ class WastelandAdventure:
         if action == "travel":
             print(f"\n{CLR_YELLOW}You venture deeper into the wasteland...{CLR_RESET}\n")
             available_hostiles = location_info.get("monsters", [])
-            encounter_roll = random.randint(1, 20)
-            if available_hostiles and encounter_roll > 8:
-                num_enemies = min(len(available_hostiles), 1 if encounter_roll > 15 else 2)
-                self.start_combat_encounter(num_enemies)
+            encounter_roll = self.rng.randint(1, 20)
+            if available_hostiles:
+                if encounter_roll > 8:
+                    num_enemies = min(len(available_hostiles), 1 if encounter_roll > 15 else 2)
+                    self.start_combat_encounter(num_enemies)
+                else:
+                    print(f"{CLR_GREEN}You travel safely, encountering nothing.{CLR_RESET}\n")
             elif encounter_roll > 16:
                 self.start_combat_encounter(1)
             else:
