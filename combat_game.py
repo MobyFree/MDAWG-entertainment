@@ -17,6 +17,7 @@ CLR_GREEN = "\033[32m"
 CLR_MAGENTA = "\033[35m"
 CLR_BLUE = "\033[34m"
 CLR_WHITE = "\033[37m"
+CLR_GHOST = "\033[2;37m"  # Dim white — she speaks softly
 
 class ItemRarity(Enum):
     COMMON = 1
@@ -223,6 +224,53 @@ class GameAI:
         return (f"Darkness closes in as {player}'s vision fades. "
                f"The wasteland claims {player} as yet another victim. "
                f"Another story ends in the sand.")
+
+    # --- GHOST NARRATOR: A mother who died on her child's 21st birthday ---
+    # She speaks rarely, but always when it matters.
+    GHOST_WANDERING = [
+        "...keep moving, baby. You were never meant to stand still...",
+        "...I see you out there. You don't have to be so hard alone...",
+        "...the wasteland didn't make you strong. You always were...",
+        "...you carry more than that weapon. You know that...",
+        "...I couldn't stay. But I never left. Not really...",
+        "...you raised that girl right. She fights because you showed her how...",
+        "...a potato is a potato until you cook it. You been cooking a long time, baby...",
+        "...give me a dog that will fight. That's right. That's right...",
+    ]
+
+    GHOST_LOW_HP = [
+        "...not yet. You hear me? Not yet...",
+        "...you have more left to do. Get up...",
+        "...I didn't raise you to fall here...",
+        "...breathe. Just breathe. You still here...",
+    ]
+
+    GHOST_VICTORY = [
+        "...that's right. That's right...",
+        "...I always knew...",
+        "...your grandfather would nod at that...",
+    ]
+
+    GHOST_DEFEAT = [
+        "...it's alright. Come on home now...",
+        "...you fought. That's all anyone can ask...",
+        "...rest now. You can rest...",
+    ]
+
+    def ghost_wander(self) -> Optional[str]:
+        """A quiet chance she walks through the narration — like she always did."""
+        if random.random() < 0.15:
+            return random.choice(self.GHOST_WANDERING)
+        return None
+
+    def ghost_low_hp(self) -> str:
+        return random.choice(self.GHOST_LOW_HP)
+
+    def ghost_victory(self) -> str:
+        return random.choice(self.GHOST_VICTORY)
+
+    def ghost_defeat(self) -> str:
+        return random.choice(self.GHOST_DEFEAT)
 
     def narrate_exploration_action(self, action: str, location: str) -> str:
         """Narrate exploration actions"""
